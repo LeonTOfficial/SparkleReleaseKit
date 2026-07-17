@@ -4,6 +4,13 @@ All notable changes to SparkleReleaseKit are documented here. The project follow
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-17
+
+### Security
+
+- Redacted suspicious tracked-file paths and Git command output from `doctor` diagnostics so secret scans report the problem without echoing potentially sensitive metadata.
+- Added regression coverage that guarantees suspicious filenames are omitted from human-readable diagnostics.
+
 ## [0.1.0] - 2026-07-17
 
 ### Added

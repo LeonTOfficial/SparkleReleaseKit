@@ -25,7 +25,7 @@ expect_usage_error() {
   fi
 }
 
-"$CLI" version | grep -F "SparkleReleaseKit 0.1.0" >/dev/null
+"$CLI" version | grep -F "SparkleReleaseKit 0.1.1" >/dev/null
 "$CLI" help | grep -F "SAFE DEFAULTS" >/dev/null
 expect_usage_error "unknown option" doctor --jsno
 expect_usage_error "missing option value" setup --owner

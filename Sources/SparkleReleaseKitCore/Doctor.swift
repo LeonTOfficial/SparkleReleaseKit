@@ -182,7 +182,7 @@ public struct Doctor: Sendable {
             return [.init(
                 .failure,
                 "Tracked secret filenames",
-                "Potential private material is tracked in \(suspiciousNames.count) file(s): \(suspiciousNames.prefix(5).joined(separator: ", ")).",
+                "Potential private material is tracked in one or more files. Paths are intentionally omitted from diagnostic output.",
                 remediation: "Remove private material from Git history, rotate exposed credentials, and use Keychain or protected CI secrets."
             )]
         }
@@ -193,16 +193,15 @@ public struct Doctor: Sendable {
             directory: root
         )
         if let content, content.status == 0, !content.standardOutput.isEmpty {
-            let paths = content.standardOutput.split(separator: "\n").prefix(5).joined(separator: ", ")
             return [.init(
                 .failure,
                 "Tracked secret contents",
-                "Potential credential material appears in tracked file(s): \(paths).",
+                "Potential credential material appears in one or more tracked files. Paths and matched content are intentionally omitted from diagnostic output.",
                 remediation: "Treat the credential as exposed, rotate it, and remove it from repository history."
             )]
         }
         if let content, content.status > 1 {
-            return [.init(.warning, "Tracked secret contents", "git grep could not complete: \(content.standardError)")]
+            return [.init(.warning, "Tracked secret contents", "The tracked-file content scan could not complete. Command output is intentionally omitted.")]
         }
         return [.init(.pass, "Tracked secret scan", "No private-key headers or common token formats were found in tracked files.")]
     }

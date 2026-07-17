@@ -132,6 +132,29 @@ struct IntegrationTests {
         #expect(diagnostics.contains { $0.severity == .failure && $0.title == "Info.plist path" })
     }
 
+    @Test("Doctor redacts suspicious tracked-file paths")
+    func doctorRedactsSuspiciousTrackedFilePaths() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let sensitiveName = "private_key-production.p8"
+        try "not-a-real-key".write(
+            to: fixture.appendingPathComponent(sensitiveName),
+            atomically: true,
+            encoding: .utf8
+        )
+        let initialized = try ProcessRunner().run("/usr/bin/git", arguments: ["init"], directory: fixture)
+        try #require(initialized.status == 0)
+        let staged = try ProcessRunner().run("/usr/bin/git", arguments: ["add", sensitiveName], directory: fixture)
+        try #require(staged.status == 0)
+
+        let diagnostics = Doctor().inspect(projectRoot: fixture, configuration: fixtureConfiguration())
+        let finding = try #require(diagnostics.first { $0.title == "Tracked secret filenames" })
+
+        #expect(finding.severity == .failure)
+        #expect(!finding.detail.contains(sensitiveName))
+        #expect(finding.detail.contains("intentionally omitted"))
+    }
+
     private func makeFixture() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("SparkleReleaseKitTests-\(UUID().uuidString)")
         let project = root.appendingPathComponent("Example App.xcodeproj")

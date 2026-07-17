@@ -3,7 +3,7 @@ import Foundation
 import SparkleReleaseKitCore
 
 struct SparkleKitCLI {
-    static let version = "0.1.0"
+    static let version = "0.1.1"
 
     private let configurationStore = ConfigurationStore()
 
