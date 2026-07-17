@@ -155,6 +155,31 @@ struct IntegrationTests {
         #expect(finding.detail.contains("intentionally omitted"))
     }
 
+    @Test("Doctor redacts suspicious tracked-file contents")
+    func doctorRedactsSuspiciousTrackedFileContents() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let filename = "tracked-credential.txt"
+        let syntheticCredential = "gh" + "p_" + String(repeating: "A", count: 24)
+        try syntheticCredential.write(
+            to: fixture.appendingPathComponent(filename),
+            atomically: true,
+            encoding: .utf8
+        )
+        let initialized = try ProcessRunner().run("/usr/bin/git", arguments: ["init"], directory: fixture)
+        try #require(initialized.status == 0)
+        let staged = try ProcessRunner().run("/usr/bin/git", arguments: ["add", filename], directory: fixture)
+        try #require(staged.status == 0)
+
+        let diagnostics = Doctor().inspect(projectRoot: fixture, configuration: fixtureConfiguration())
+        let finding = try #require(diagnostics.first { $0.title == "Tracked secret contents" })
+
+        #expect(finding.severity == .failure)
+        #expect(!finding.detail.contains(filename))
+        #expect(!finding.detail.contains(syntheticCredential))
+        #expect(finding.detail.contains("intentionally omitted"))
+    }
+
     private func makeFixture() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("SparkleReleaseKitTests-\(UUID().uuidString)")
         let project = root.appendingPathComponent("Example App.xcodeproj")
