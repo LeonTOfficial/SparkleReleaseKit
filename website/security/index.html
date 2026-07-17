@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="SparkleReleaseKit security model for macOS update delivery.">
+  <meta name="theme-color" content="#0d0e10"><link rel="canonical" href="https://leontofficial.github.io/SparkleReleaseKit/security/">
+  <title>Security - SparkleReleaseKit</title>
+  <link rel="icon" href="../assets/logo.svg"><link rel="stylesheet" href="../styles.css"><script>document.documentElement.classList.add("js")</script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="site-header"><nav class="nav" aria-label="Main navigation"><a class="brand" href="../"><img src="../assets/logo.svg" alt=""><span>SparkleReleaseKit</span></a><button class="menu-toggle" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="site-links"><span></span><span></span><span></span></button><div class="nav-links" id="site-links"><a href="../docs/">Docs</a><a href="./" aria-current="page">Security</a><a href="https://github.com/LeonTOfficial/SparkleReleaseKit">GitHub</a><a class="button compact primary" href="https://github.com/LeonTOfficial/SparkleReleaseKit/releases/latest/download/SparkleReleaseKit-macos.zip">Download</a></div></nav></header>
+  <main id="content">
+    <section class="page-hero"><div class="inner"><div class="eyebrow">Security model</div><h1>Updates are executable code. Treat the pipeline accordingly.</h1><p class="lead">SparkleReleaseKit keeps public configuration separate from signing secrets and verifies the artifact users will actually receive.</p></div></section>
+    <div class="docs-layout">
+      <nav class="docs-nav" aria-label="Security sections"><a href="#layers">Trust layers</a><a href="#secrets">Secrets</a><a href="#actions">CI</a><a href="#release">Release</a><a href="#report">Report</a></nav>
+      <article class="article">
+        <section id="layers"><h2>Five complementary trust layers</h2><div class="grid two"><div class="card"><h3>HTTPS</h3><p>Protects feeds and downloads in transit.</p></div><div class="card"><h3>EdDSA</h3><p>Authenticates the archive to the installed app.</p></div><div class="card"><h3>Developer ID</h3><p>Binds the distributed code to an Apple identity.</p></div><div class="card"><h3>Notarization</h3><p>Adds Apple's automated scan and Gatekeeper ticket.</p></div></div></section>
+        <section id="secrets"><h2>Private means private</h2><p><code>SUPublicEDKey</code> is public and belongs in the app. The private EdDSA key, `.p12` certificates, `.p8` keys, passwords, and tokens belong only in Keychain or protected CI secrets.</p><div class="callout warning">Never paste private signing material into a coding-agent prompt, issue, log, configuration file, or commit.</div><p><a href="https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/KEY_MANAGEMENT.md">Read the key management and recovery guide.</a></p></section>
+        <section id="actions"><h2>Least-privilege automation</h2><p>Validation jobs receive read-only repository access and no release secrets. Production signing should run in a protected environment, with reviewed actions pinned to commit SHAs and explicit permissions.</p></section>
+        <section id="release"><h2>Verify the release, not just the source</h2><p>Run tests, build Release, inspect code signing, notarize, staple, create the final ZIP and DMG, verify both archives, generate the signed appcast, and perform an older-to-newer test update before publication.</p></section>
+        <section id="report"><h2>Report a vulnerability privately</h2><p>Use GitHub private vulnerability reporting. Remove private keys, user data, and proprietary project source before submitting evidence.</p><a class="button primary" href="https://github.com/LeonTOfficial/SparkleReleaseKit/security/advisories/new">Open a private report</a></section>
+      </article>
+    </div>
+  </main>
+  <footer class="footer"><span>Created by LeonTOfficial · MIT licensed</span><a href="../">Home</a><a href="../docs/">Documentation</a><a href="https://github.com/LeonTOfficial/SparkleReleaseKit">GitHub</a></footer>
+  <script src="../script.js"></script>
+</body>
+</html>

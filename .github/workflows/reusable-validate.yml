@@ -1,0 +1,134 @@
+name: Validate a Sparkle-enabled macOS app
+
+on:
+  workflow_call:
+    inputs:
+      container:
+        description: Relative path to the .xcodeproj or .xcworkspace
+        required: true
+        type: string
+      scheme:
+        description: Shared application scheme
+        required: true
+        type: string
+      configuration:
+        description: Xcode build configuration
+        required: false
+        default: Release
+        type: string
+      config-path:
+        description: Relative path to sparklekit.json
+        required: false
+        default: sparklekit.json
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Reject tracked private material
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '\.(p8|p12)$|(^|/)(private|secret)[_-]?(key|token)' ; then
+            echo "A tracked file name resembles private signing material."
+            exit 1
+          fi
+
+      - name: Validate public configuration
+        shell: bash
+        env:
+          CONFIG_PATH: ${{ inputs.config-path }}
+          CONTAINER: ${{ inputs.container }}
+          SCHEME: ${{ inputs.scheme }}
+          CONFIGURATION: ${{ inputs.configuration }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import pathlib
+          import urllib.parse
+
+          root = pathlib.Path.cwd().resolve()
+          config_path = os.environ["CONFIG_PATH"]
+          if pathlib.PurePosixPath(config_path).is_absolute() or "\\" in config_path:
+              raise SystemExit("Configuration path must be relative to the repository")
+          if any(part in ("", ".", "..") for part in config_path.split("/")):
+              raise SystemExit("Configuration path contains an unsafe component")
+          path = (root / config_path).resolve()
+          try:
+              path.relative_to(root)
+          except ValueError as error:
+              raise SystemExit("Configuration path resolves outside the repository") from error
+          if path.stat().st_size > 1024 * 1024:
+              raise SystemExit("Configuration exceeds the 1 MiB safety limit")
+          config = json.loads(path.read_text(encoding="utf-8"))
+          if config.get("project", {}).get("container") != os.environ["CONTAINER"]:
+              raise SystemExit("Workflow container does not match sparklekit.json")
+          if config.get("project", {}).get("scheme") != os.environ["SCHEME"]:
+              raise SystemExit("Workflow scheme does not match sparklekit.json")
+          if config.get("project", {}).get("configuration") != os.environ["CONFIGURATION"]:
+              raise SystemExit("Workflow configuration does not match sparklekit.json")
+
+          container = os.environ["CONTAINER"]
+          if pathlib.PurePosixPath(container).is_absolute() or "\\" in container:
+              raise SystemExit("Xcode container must be a safe relative path")
+          if any(part in ("", ".", "..") for part in container.split("/")):
+              raise SystemExit("Xcode container contains an unsafe path component")
+          if not container.endswith((".xcodeproj", ".xcworkspace")):
+              raise SystemExit("Xcode container must be a project or workspace")
+          resolved_container = (root / container).resolve()
+          try:
+              resolved_container.relative_to(root)
+          except ValueError as error:
+              raise SystemExit("Xcode container resolves outside the repository") from error
+          if not resolved_container.exists():
+              raise SystemExit("Xcode container does not exist")
+
+          updates = config.get("updates", {})
+          parsed = urllib.parse.urlsplit(updates.get("feedURL", ""))
+          if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+              raise SystemExit("Feed URL must be credential-free HTTPS without a query or fragment")
+          try:
+              public_key = base64.b64decode(updates.get("publicEDKey", ""), validate=True)
+          except Exception as error:
+              raise SystemExit("Public Ed25519 key is not valid base64") from error
+          if len(public_key) != 32:
+              raise SystemExit("Public Ed25519 key must contain exactly 32 bytes")
+          PY
+
+      - name: Resolve dependencies
+        shell: bash
+        env:
+          CONTAINER: ${{ inputs.container }}
+          SCHEME: ${{ inputs.scheme }}
+        run: |
+          set -euo pipefail
+          if [[ "$CONTAINER" == *.xcworkspace ]]; then
+            xcodebuild -resolvePackageDependencies -workspace "$CONTAINER" -scheme "$SCHEME"
+          else
+            xcodebuild -resolvePackageDependencies -project "$CONTAINER" -scheme "$SCHEME"
+          fi
+
+      - name: Build without distribution credentials
+        shell: bash
+        env:
+          CONTAINER: ${{ inputs.container }}
+          SCHEME: ${{ inputs.scheme }}
+          CONFIGURATION: ${{ inputs.configuration }}
+        run: |
+          set -euo pipefail
+          if [[ "$CONTAINER" == *.xcworkspace ]]; then
+            xcodebuild build -workspace "$CONTAINER" -scheme "$SCHEME" -configuration "$CONFIGURATION" CODE_SIGNING_ALLOWED=NO
+          else
+            xcodebuild build -project "$CONTAINER" -scheme "$SCHEME" -configuration "$CONFIGURATION" CODE_SIGNING_ALLOWED=NO
+          fi

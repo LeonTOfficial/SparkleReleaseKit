@@ -1,0 +1,79 @@
+name: Release SparkleReleaseKit
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Verify tag and changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          grep -F "[$version]" CHANGELOG.md
+          grep -F "static let version = \"$version\"" Sources/SparkleReleaseKitCLI/SparkleKitCLI.swift
+
+      - name: Run complete validation suite
+        run: scripts/run-tests.sh
+
+      - name: Build universal release binary
+        run: swift build --configuration release --arch arm64 --arch x86_64
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          product_dir=".build/apple/Products/Release"
+          mkdir -p dist/SparkleReleaseKit
+          cp "$product_dir/sparklekit" dist/SparkleReleaseKit/
+          cp -R "$product_dir/SparkleReleaseKit_SparkleReleaseKitCore.bundle" dist/SparkleReleaseKit/
+          cp scripts/install.sh dist/SparkleReleaseKit/install.sh
+          cp README.md CHANGELOG.md LICENSE dist/SparkleReleaseKit/
+          lipo -info dist/SparkleReleaseKit/sparklekit
+          ditto -c -k --keepParent dist/SparkleReleaseKit SparkleReleaseKit-macos.zip
+          shasum -a 256 SparkleReleaseKit-macos.zip > SparkleReleaseKit-macos.zip.sha256
+
+      - name: Verify packaged CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir package-check
+          ditto -x -k SparkleReleaseKit-macos.zip package-check
+          packaged="package-check/SparkleReleaseKit/sparklekit"
+          "$packaged" version | grep -F "SparkleReleaseKit ${GITHUB_REF_NAME#v}"
+          lipo -verify_arch arm64 x86_64 "$packaged"
+          install_dir="$RUNNER_TEMP/sparklekit-install"
+          SPARKLEKIT_INSTALL_DIR="$install_dir" package-check/SparkleReleaseKit/install.sh
+          "$install_dir/sparklekit" version | grep -F "SparkleReleaseKit ${GITHUB_REF_NAME#v}"
+          shasum -a 256 -c SparkleReleaseKit-macos.zip.sha256
+
+      - name: Attest tested binary package
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: SparkleReleaseKit-macos.zip
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            SparkleReleaseKit-macos.zip \
+            SparkleReleaseKit-macos.zip.sha256 \
+            --verify-tag \
+            --generate-notes \
+            --title "SparkleReleaseKit ${GITHUB_REF_NAME#v}"

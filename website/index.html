@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="SparkleReleaseKit adds secure Sparkle updates to a macOS app with GitHub Releases in minutes.">
+  <meta name="theme-color" content="#0d0e10">
+  <meta property="og:title" content="SparkleReleaseKit">
+  <meta property="og:description" content="Secure Sparkle updates for macOS, with a workflow people and coding agents can verify.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://leontofficial.github.io/SparkleReleaseKit/">
+  <meta property="og:image" content="https://leontofficial.github.io/SparkleReleaseKit/assets/hero-terminal.png">
+  <meta property="og:image:width" content="1600">
+  <meta property="og:image:height" content="900">
+  <link rel="canonical" href="https://leontofficial.github.io/SparkleReleaseKit/">
+  <title>SparkleReleaseKit - Secure macOS updates, made clear</title>
+  <link rel="icon" href="assets/logo.svg">
+  <link rel="stylesheet" href="styles.css">
+  <script>document.documentElement.classList.add("js")</script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="site-header">
+    <nav class="nav" aria-label="Main navigation">
+      <a class="brand" href="./"><img src="assets/logo.svg" alt=""><span>SparkleReleaseKit</span></a>
+      <button class="menu-toggle" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="site-links"><span></span><span></span><span></span></button>
+      <div class="nav-links" id="site-links">
+        <a href="docs/">Docs</a>
+        <a href="security/">Security</a>
+        <a href="https://github.com/LeonTOfficial/SparkleReleaseKit">GitHub</a>
+        <a class="button compact primary" href="https://github.com/LeonTOfficial/SparkleReleaseKit/releases/latest/download/SparkleReleaseKit-macos.zip">Download</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="content">
+    <section class="hero">
+      <div class="hero-content">
+        <div class="eyebrow">Sparkle 2.9.4 · Swift 6 · Open source</div>
+        <h1>Secure macOS updates, without the release-pipeline maze.</h1>
+        <p class="lead">Detect an existing Xcode app, generate the Sparkle integration, protect signing material, and verify every release through one clear workflow built for developers and coding agents.</p>
+        <div class="actions">
+          <a class="button primary" href="docs/">Start the quick setup</a>
+          <a class="button" href="https://github.com/LeonTOfficial/SparkleReleaseKit/releases/latest/download/SparkleReleaseKit-macos.zip">Download tested CLI</a>
+          <a class="button" href="https://github.com/LeonTOfficial/SparkleReleaseKit">View source on GitHub</a>
+        </div>
+        <div class="proof">
+          <span><strong>Dry-run first</strong><br>Nothing changes by surprise.</span>
+          <span><strong>Public config only</strong><br>Private keys stay private.</span>
+          <span><strong>Real verification</strong><br>Release build, archive, feed, and signing.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="section">
+        <div class="section-heading" data-reveal>
+          <div class="eyebrow">One source of truth</div>
+          <h2>The important pieces arrive together.</h2>
+          <p>SparkleReleaseKit does the repeatable work and leaves only the two Xcode decisions that should remain explicit.</p>
+        </div>
+        <div class="grid three">
+          <article class="card" data-reveal><div class="icon">01</div><h3>Detect</h3><p>Find the project, app style, shared scheme, bundle identifier, plist, and GitHub remote.</p></article>
+          <article class="card" data-reveal><div class="icon">02</div><h3>Integrate</h3><p>Generate the updater, secure metadata, CI checks, release notes, backup, and project-specific guide.</p></article>
+          <article class="card" data-reveal><div class="icon">03</div><h3>Prove</h3><p>Build the real scheme, inspect release archives, validate the appcast, and produce structured evidence.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="section grid two">
+        <div class="section-heading" data-reveal>
+          <div class="eyebrow">Human-friendly CLI</div>
+          <h2>Preview first. Apply when it looks right.</h2>
+          <p>Commands are deterministic, readable, and equally usable from Terminal or a coding agent.</p>
+        </div>
+        <div class="terminal" data-reveal aria-label="SparkleReleaseKit command example">
+          <div class="terminal-bar"><span></span><span></span><span></span></div>
+          <pre><span class="prompt">$</span> <span class="command">sparklekit setup ~/Projects/MyApp</span>
+
+<span class="result">SparkleReleaseKit
+Set up secure Sparkle updates
+
+Success: Created sparklekit.json</span>
+
+<span class="prompt">$</span> <span class="command">sparklekit integrate ~/Projects/MyApp</span>
+  + AppUpdater.swift
+  + sparkle-release.yml
+  ~ Info.plist
+
+<span class="result">No files were changed. Add --apply when ready.</span></pre>
+          <pre class="terminal-followup"><span class="prompt">$</span> <span class="command">sparklekit doctor ~/Projects/MyApp --json</span>
+<span class="result">{ "success": true, "diagnostics": [...] }</span></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="section">
+        <div class="section-heading" data-reveal><div class="eyebrow">Clear path</div><h2>From app source to tested update.</h2></div>
+        <div class="steps" data-reveal>
+          <article class="step"><div><h3>Run setup</h3><p>The CLI detects the existing app and writes public configuration.</p></div></article>
+          <article class="step"><div><h3>Add the public key</h3><p>Sparkle keeps the private key in Keychain; only the public EdDSA key enters the app.</p></div></article>
+          <article class="step"><div><h3>Review and apply</h3><p>Inspect every path, then generate the integration with timestamped backups.</p></div></article>
+          <article class="step"><div><h3>Finish two Xcode steps</h3><p>Add the official package and keep the updater alive from app startup.</p></div></article>
+          <article class="step"><div><h3>Verify and stage the release</h3><p>Doctor, Release build, archive inspection, official appcast generation, and an older-to-newer test update complete the evidence.</p></div></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="section grid two">
+        <div data-reveal><div class="eyebrow">Built for coding agents</div><h2>A protocol, not a vague prompt.</h2><p class="muted">`AGENTS.md`, `llms.txt`, JSON Schema, exact commands, safety boundaries, expected files, and a completion report let an AI integrate the toolkit without guessing your release security.</p><a class="button" href="https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/AI/AI_INTEGRATION.md">Read the AI protocol</a></div>
+        <div data-reveal><div class="eyebrow">Security boundary</div><h2>Signing secrets never belong in project configuration.</h2><p class="muted">The toolkit separates public metadata from private signing material, rejects suspicious configuration, minimizes workflow permissions, and verifies the artifact users will actually install.</p><a class="button" href="security/">Read the security model</a></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer"><span>Created by LeonTOfficial · MIT licensed</span><a href="docs/">Documentation</a><a href="security/">Security</a><a href="https://github.com/LeonTOfficial/SparkleReleaseKit">GitHub</a></footer>
+  <script src="script.js"></script>
+</body>
+</html>

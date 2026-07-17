@@ -1,0 +1,34 @@
+{
+  "$schema": "https://leontofficial.github.io/SparkleReleaseKit/schema/sparklekit.schema.json",
+  "app": {
+    "bundleIdentifier": "com.example.MyApp",
+    "minimumMacOS": "13.0",
+    "name": "My App",
+    "style": "swiftUI"
+  },
+  "distribution": {
+    "installer": "dmg",
+    "notarization": "required",
+    "updateArchive": "zip"
+  },
+  "github": {
+    "owner": "ExampleDeveloper",
+    "pagesBranch": "gh-pages",
+    "repository": "MyApp"
+  },
+  "project": {
+    "configuration": "Release",
+    "container": "My App.xcodeproj",
+    "infoPlist": "My App/Info.plist",
+    "scheme": "My App"
+  },
+  "schemaVersion": 1,
+  "updates": {
+    "automaticChecks": true,
+    "automaticDownloads": false,
+    "channel": null,
+    "feedURL": "https://exampledeveloper.github.io/MyApp/appcast.xml",
+    "publicEDKey": "",
+    "sparkleVersion": "2.9.4"
+  }
+}

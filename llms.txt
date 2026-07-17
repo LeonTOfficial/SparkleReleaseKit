@@ -1,0 +1,24 @@
+# SparkleReleaseKit
+
+SparkleReleaseKit adds a safe, reproducible Sparkle 2 update workflow to an existing macOS Xcode app.
+
+Primary documentation:
+- README: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/README.md
+- AI integration: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/AI/AI_INTEGRATION.md
+- Security model: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/SECURITY_MODEL.md
+- CLI reference: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/CLI_REFERENCE.md
+- Configuration schema: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/schemas/sparklekit.schema.json
+- Official Sparkle documentation: https://sparkle-project.org/documentation/
+
+Agent workflow:
+1. Inspect the target macOS project.
+2. Run `sparklekit setup <project-path>`.
+3. Add only the public EdDSA key to sparklekit.json.
+4. Preview with `sparklekit integrate <project-path>`.
+5. Apply with `sparklekit integrate <project-path> --apply`.
+6. Follow the generated SparkleReleaseKit/INTEGRATION.md.
+7. Run `sparklekit doctor`, build in Release, and verify a real archive.
+8. Use `sparklekit test --json` and `sparklekit validate-feed --json` for deterministic completion evidence.
+9. Prepare release staging with `sparklekit prepare-release`; private signing keys remain in Keychain or protected CI secrets.
+
+Never expose or commit private update-signing keys, Apple certificates, App Store Connect keys, passwords, or tokens.

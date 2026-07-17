@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift:
+    name: Swift 6 build and tests
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Show toolchain
+        run: |
+          set -euo pipefail
+          swift --version
+          xcodebuild -version
+
+      - name: Build release CLI
+        run: swift build --configuration release
+
+      - name: Run tests
+        run: scripts/run-tests.sh
+
+      - name: Exercise public commands
+        run: |
+          set -euo pipefail
+          .build/release/sparklekit version
+          .build/release/sparklekit help
+          scripts/test-cli.sh
+
+      - name: Validate scripts and JSON
+        run: |
+          set -euo pipefail
+          for script in sparklekit scripts/bootstrap.sh scripts/install.sh scripts/run-tests.sh; do zsh -n "$script"; done
+          for script in scripts/check-site.sh scripts/test-cli.sh; do bash -n "$script"; done
+          python3 -m py_compile scripts/check_site.py
+          python3 -m json.tool examples/sparklekit.example.json > /dev/null
+          python3 -m json.tool schemas/sparklekit.schema.json > /dev/null
+          scripts/check-site.sh
+
+      - name: Scan tracked files for secret material
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '\.(p8|p12)$|(^|/)(private|secret)[_-]?(key|token)' ; then
+            echo "Tracked file name resembles private signing material."
+            exit 1
+          fi
+          if git grep -nE '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})' -- . ; then
+            echo "Tracked content resembles a credential."
+            exit 1
+          fi
+
+      - name: Package CLI
+        run: |
+          set -euo pipefail
+          mkdir -p dist/SparkleReleaseKit
+          cp .build/release/sparklekit dist/SparkleReleaseKit/sparklekit
+          cp -R .build/release/SparkleReleaseKit_SparkleReleaseKitCore.bundle dist/SparkleReleaseKit/
+          cp scripts/install.sh dist/SparkleReleaseKit/install.sh
+          cp README.md CHANGELOG.md LICENSE dist/SparkleReleaseKit/
+          ditto -c -k --keepParent dist/SparkleReleaseKit SparkleReleaseKit-macos.zip
+          shasum -a 256 SparkleReleaseKit-macos.zip > SparkleReleaseKit-macos.zip.sha256
+
+      - name: Verify packaged installer
+        run: |
+          set -euo pipefail
+          mkdir package-check
+          ditto -x -k SparkleReleaseKit-macos.zip package-check
+          install_dir="$RUNNER_TEMP/sparklekit-install"
+          SPARKLEKIT_INSTALL_DIR="$install_dir" package-check/SparkleReleaseKit/install.sh
+          "$install_dir/sparklekit" version | grep -F "SparkleReleaseKit 0.1.0"
+          shasum -a 256 -c SparkleReleaseKit-macos.zip.sha256
+
+      - name: Upload tested package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SparkleReleaseKit-cli-macos
+          path: |
+            SparkleReleaseKit-macos.zip
+            SparkleReleaseKit-macos.zip.sha256
+          if-no-files-found: error
+
+  linux-manifest:
+    name: Package manifest portability
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Parse package manifest
+        run: swift package dump-package > /dev/null
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0

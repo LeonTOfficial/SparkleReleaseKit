@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://leontofficial.github.io/SparkleReleaseKit/schema/sparklekit.schema.json",
+  "title": "SparkleReleaseKit configuration",
+  "description": "Public, non-secret configuration for a macOS Sparkle update workflow.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "app", "project", "github", "updates", "distribution"],
+  "properties": {
+    "$schema": { "const": "https://leontofficial.github.io/SparkleReleaseKit/schema/sparklekit.schema.json" },
+    "schemaVersion": { "const": 1 },
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "bundleIdentifier", "minimumMacOS", "style"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "bundleIdentifier": { "type": "string", "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$" },
+        "minimumMacOS": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+){1,2}$" },
+        "style": { "enum": ["appKit", "swiftUI", "unknown"] }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["container", "scheme", "configuration"],
+      "properties": {
+        "container": {
+          "type": "string",
+          "maxLength": 4096,
+          "allOf": [
+            { "pattern": "^[^/\\\\].*\\.(xcodeproj|xcworkspace)$" },
+            { "not": { "pattern": "(^|/)\\.\\.?(/|$)|//|\\\\|\\$\\{\\{" } }
+          ]
+        },
+        "scheme": { "type": "string", "minLength": 1, "maxLength": 255, "not": { "pattern": "\\$\\{\\{" } },
+        "configuration": { "type": "string", "minLength": 1, "maxLength": 255, "not": { "pattern": "\\$\\{\\{" } },
+        "infoPlist": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "not": { "pattern": "^/|(^|/)\\.\\.?(/|$)|//|\\\\" }
+            }
+          ]
+        }
+      }
+    },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "repository", "pagesBranch"],
+      "properties": {
+        "owner": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}$" },
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,100}$" },
+        "pagesBranch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$",
+          "not": { "pattern": "\\.\\.|//|@\\{|/$|\\.$|\\.lock$|(^|/)\\.\\.?(/|$)" }
+        }
+      }
+    },
+    "updates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sparkleVersion", "feedURL", "publicEDKey", "automaticChecks", "automaticDownloads"],
+      "properties": {
+        "sparkleVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "feedURL": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048,
+          "pattern": "^https://",
+          "not": { "pattern": "[?#]" }
+        },
+        "publicEDKey": {
+          "type": "string",
+          "pattern": "^$|^[A-Za-z0-9+/]{43}=$",
+          "description": "Empty during initial setup, then Sparkle's 32-byte base64 Ed25519 public key. Never place the private key here."
+        },
+        "automaticChecks": { "type": "boolean" },
+        "automaticDownloads": { "type": "boolean" },
+        "channel": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
+          ]
+        }
+      }
+    },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["installer", "updateArchive", "notarization"],
+      "properties": {
+        "installer": { "enum": ["zip", "dmg"] },
+        "updateArchive": { "enum": ["zip", "dmg"] },
+        "notarization": { "enum": ["required", "optional", "disabled"] }
+      }
+    }
+  }
+}

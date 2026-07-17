@@ -1,0 +1,18 @@
+# {{APP_NAME}} VERSION
+
+## Highlights
+
+- Describe the most important user-facing improvement.
+- Describe the most important reliability or security improvement.
+
+## Changes
+
+- Added:
+- Improved:
+- Fixed:
+
+## Compatibility
+
+- Requires macOS {{MINIMUM_MACOS}} or later.
+
+Full project: https://github.com/{{GITHUB_OWNER}}/{{GITHUB_REPOSITORY}}

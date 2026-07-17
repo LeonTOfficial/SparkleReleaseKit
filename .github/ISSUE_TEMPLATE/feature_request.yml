@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest a safer or easier integration workflow
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the current developer experience and who is affected.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed experience
+      description: Show the ideal command or workflow.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and compatibility considerations
+      description: Note any impact on signing, secrets, Xcode projects, feeds, or older apps.

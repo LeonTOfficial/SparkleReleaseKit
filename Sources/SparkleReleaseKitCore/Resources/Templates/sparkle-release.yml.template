@@ -1,0 +1,24 @@
+name: Sparkle release readiness
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sparkle-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    uses: LeonTOfficial/SparkleReleaseKit/.github/workflows/reusable-validate.yml@v0.1.0
+    with:
+      container: {{CONTAINER_YAML}}
+      scheme: {{SCHEME_YAML}}
+      configuration: {{CONFIGURATION_YAML}}
+      config-path: sparklekit.json

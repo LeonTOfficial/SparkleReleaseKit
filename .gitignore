@@ -1,0 +1,20 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# SparkleReleaseKit private and generated data
+.sparklekit/private/
+.sparklekit/backups/
+.sparklekit/releases/
+*.p8
+*.p12
+
+# Local environment
+.env
+.env.*
+!.env.example

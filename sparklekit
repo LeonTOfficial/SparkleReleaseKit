@@ -1,0 +1,5 @@
+#!/bin/zsh
+set -euo pipefail
+
+KIT_ROOT="${0:A:h}"
+exec swift run --package-path "$KIT_ROOT" -c release sparklekit "$@"

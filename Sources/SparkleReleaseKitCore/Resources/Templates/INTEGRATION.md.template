@@ -1,0 +1,53 @@
+# Finish the {{APP_NAME}} integration
+
+SparkleReleaseKit generated and validated the project-specific files. Two Xcode steps remain because Xcode does not expose a safe public command-line API for adding package products to arbitrary projects.
+
+## 1. Add Sparkle with Swift Package Manager
+
+1. Open `{{CONTAINER}}` in Xcode.
+2. Choose **File > Add Package Dependencies...**.
+3. Enter `https://github.com/sparkle-project/Sparkle`.
+4. Select the **Sparkle {{SPARKLE_VERSION}}** release line and add the `Sparkle` product to the `{{SCHEME}}` app target.
+5. Add `SparkleReleaseKit/AppUpdater.swift` to the same target if your project does not use file-system-synchronized groups.
+
+## 2. Keep the updater alive
+
+### SwiftUI
+
+Add this property to the type marked `@main`:
+
+```swift
+@State private var appUpdater = AppUpdater.shared
+```
+
+Add a command if you want a manual update button:
+
+```swift
+CommandGroup(after: .appInfo) {
+    Button("Check for Updates...") {
+        AppUpdater.shared.checkForUpdates()
+    }
+}
+```
+
+### AppKit
+
+Add this property to your `AppDelegate`:
+
+```swift
+private let appUpdater = AppUpdater.shared
+```
+
+Connect a **Check for Updates...** menu item to `AppUpdater.shared.checkForUpdates(_:)`.
+
+## Verify
+
+```bash
+sparklekit doctor "$(pwd)"
+sparklekit test "$(pwd)"
+```
+
+Feed: `{{FEED_URL}}`
+Bundle identifier: `{{BUNDLE_ID}}`
+
+Never commit a Sparkle private key, Apple signing certificate, App Store Connect key, or notarization password.
