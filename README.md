@@ -23,6 +23,7 @@ It does **not** replace or fork Sparkle. Sparkle remains the secure update engin
 - Generates a minimal `AppUpdater.swift` for Sparkle 2.9.4.
 - Adds `SUFeedURL`, `SUPublicEDKey`, and automatic-update preferences safely.
 - Creates a GitHub Actions release-readiness workflow.
+- Pins every generated external workflow dependency to an immutable commit SHA.
 - Protects private keys, certificates, backups, and release staging files.
 - Previews every integration change before writing anything.
 - Creates a timestamped backup and restores its own changes if integration fails.

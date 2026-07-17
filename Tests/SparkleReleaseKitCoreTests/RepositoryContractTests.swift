@@ -30,6 +30,31 @@ struct RepositoryContractTests {
         }
     }
 
+    @Test("External GitHub Actions references use immutable commit SHAs")
+    func workflowDependenciesArePinned() throws {
+        let root = repositoryRoot()
+        let workflowRoot = root.appendingPathComponent(".github/workflows")
+        var files = try FileManager.default.contentsOfDirectory(
+            at: workflowRoot,
+            includingPropertiesForKeys: nil
+        ).filter { ["yml", "yaml"].contains($0.pathExtension) }
+        files.append(root.appendingPathComponent("Sources/SparkleReleaseKitCore/Resources/Templates/sparkle-release.yml.template"))
+
+        let expression = try NSRegularExpression(pattern: #"uses:\s+[^\s@]+@([^\s#]+)"#)
+        var references = 0
+        for file in files {
+            let content = try String(contentsOf: file, encoding: .utf8)
+            let range = NSRange(content.startIndex..., in: content)
+            for match in expression.matches(in: content, range: range) {
+                let referenceRange = try #require(Range(match.range(at: 1), in: content))
+                let reference = String(content[referenceRange])
+                references += 1
+                #expect(reference.range(of: #"^[0-9a-f]{40}$"#, options: .regularExpression) != nil)
+            }
+        }
+        #expect(references >= 8)
+    }
+
     private func repositoryRoot() -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

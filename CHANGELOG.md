@@ -20,6 +20,7 @@ All notable changes to SparkleReleaseKit are documented here. The project follow
 - Reference AppKit and SwiftUI source integrations plus a responsive documentation website.
 - Machine-readable JSON Schema, `AGENTS.md`, `llms.txt`, and AI integration protocol.
 - GitHub Actions, CodeQL, dependency review, release-readiness checks, and secret guards.
+- Immutable full-commit pins for both bundled and generated GitHub Actions dependencies.
 - Strict CLI option handling and exact Ed25519 key and appcast-signature validation.
 - Bounded configuration and project-file reads plus explicit-only execution of the reviewed `generate_appcast` signing tool.
 - English documentation for setup, security, release delivery, and troubleshooting.
