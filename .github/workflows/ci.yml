@@ -81,9 +81,12 @@ jobs:
           set -euo pipefail
           mkdir package-check
           ditto -x -k SparkleReleaseKit-macos.zip package-check
+          packaged="package-check/SparkleReleaseKit/sparklekit"
+          expected_version="$("$packaged" version)"
+          [[ "$expected_version" =~ ^SparkleReleaseKit\ [0-9]+\.[0-9]+\.[0-9]+\ \(Sparkle\ [0-9]+\.[0-9]+\.[0-9]+\)$ ]]
           install_dir="$RUNNER_TEMP/sparklekit-install"
           SPARKLEKIT_INSTALL_DIR="$install_dir" package-check/SparkleReleaseKit/install.sh
-          "$install_dir/sparklekit" version | grep -F "SparkleReleaseKit 0.1.0"
+          [[ "$("$install_dir/sparklekit" version)" == "$expected_version" ]]
           codesign --verify --strict --verbose=2 "$install_dir/sparklekit"
           shasum -a 256 -c SparkleReleaseKit-macos.zip.sha256
 
