@@ -43,6 +43,8 @@ jobs:
           cp scripts/install.sh dist/SparkleReleaseKit/install.sh
           cp README.md CHANGELOG.md LICENSE dist/SparkleReleaseKit/
           lipo -info dist/SparkleReleaseKit/sparklekit
+          codesign --force --sign - --timestamp=none dist/SparkleReleaseKit/sparklekit
+          codesign --verify --strict --verbose=2 dist/SparkleReleaseKit/sparklekit
           ditto -c -k --keepParent dist/SparkleReleaseKit SparkleReleaseKit-macos.zip
           shasum -a 256 SparkleReleaseKit-macos.zip > SparkleReleaseKit-macos.zip.sha256
 
@@ -54,10 +56,12 @@ jobs:
           ditto -x -k SparkleReleaseKit-macos.zip package-check
           packaged="package-check/SparkleReleaseKit/sparklekit"
           "$packaged" version | grep -F "SparkleReleaseKit ${GITHUB_REF_NAME#v}"
-          lipo -verify_arch arm64 x86_64 "$packaged"
+          lipo "$packaged" -verify_arch arm64 x86_64
+          codesign --verify --strict --verbose=2 "$packaged"
           install_dir="$RUNNER_TEMP/sparklekit-install"
           SPARKLEKIT_INSTALL_DIR="$install_dir" package-check/SparkleReleaseKit/install.sh
           "$install_dir/sparklekit" version | grep -F "SparkleReleaseKit ${GITHUB_REF_NAME#v}"
+          codesign --verify --strict --verbose=2 "$install_dir/sparklekit"
           shasum -a 256 -c SparkleReleaseKit-macos.zip.sha256
 
       - name: Attest tested binary package

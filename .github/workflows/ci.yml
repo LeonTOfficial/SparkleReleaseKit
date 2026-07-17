@@ -71,6 +71,8 @@ jobs:
           cp -R .build/release/SparkleReleaseKit_SparkleReleaseKitCore.bundle dist/SparkleReleaseKit/
           cp scripts/install.sh dist/SparkleReleaseKit/install.sh
           cp README.md CHANGELOG.md LICENSE dist/SparkleReleaseKit/
+          codesign --force --sign - --timestamp=none dist/SparkleReleaseKit/sparklekit
+          codesign --verify --strict --verbose=2 dist/SparkleReleaseKit/sparklekit
           ditto -c -k --keepParent dist/SparkleReleaseKit SparkleReleaseKit-macos.zip
           shasum -a 256 SparkleReleaseKit-macos.zip > SparkleReleaseKit-macos.zip.sha256
 
@@ -82,6 +84,7 @@ jobs:
           install_dir="$RUNNER_TEMP/sparklekit-install"
           SPARKLEKIT_INSTALL_DIR="$install_dir" package-check/SparkleReleaseKit/install.sh
           "$install_dir/sparklekit" version | grep -F "SparkleReleaseKit 0.1.0"
+          codesign --verify --strict --verbose=2 "$install_dir/sparklekit"
           shasum -a 256 -c SparkleReleaseKit-macos.zip.sha256
 
       - name: Upload tested package

@@ -17,6 +17,7 @@ All notable changes to SparkleReleaseKit are documented here. The project follow
 - Appcast validation and secure release staging through Sparkle's official `generate_appcast` tool.
 - Stable JSON reports and documented command exit codes for coding agents and CI.
 - Universal arm64/x86_64 CLI packaging and build provenance attestation.
+- Ad-hoc package signing and post-install signature verification for the public CLI artifact.
 - Reference AppKit and SwiftUI source integrations plus a responsive documentation website.
 - Machine-readable JSON Schema, `AGENTS.md`, `llms.txt`, and AI integration protocol.
 - GitHub Actions, CodeQL, dependency review, release-readiness checks, and secret guards.

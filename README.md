@@ -45,7 +45,7 @@ Download the [latest tested macOS package](https://github.com/LeonTOfficial/Spar
 sparklekit version
 ```
 
-The release also contains a SHA-256 checksum and a GitHub artifact attestation. Until the CLI itself is Developer-ID signed and notarized, macOS may quarantine a downloaded binary. The source-build route below is the most reliable fallback and creates the executable locally:
+The release also contains a SHA-256 checksum and a GitHub artifact attestation. The packaged CLI is ad-hoc signed for structural integrity, but until it is Developer-ID signed and notarized, macOS may still quarantine a downloaded binary. The source-build route below is the most reliable fallback and creates the executable locally:
 
 ```bash
 git clone https://github.com/LeonTOfficial/SparkleReleaseKit.git
