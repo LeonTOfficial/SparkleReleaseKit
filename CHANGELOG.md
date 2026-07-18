@@ -2,7 +2,30 @@
 
 All notable changes to SparkleReleaseKit are documented here. The project follows Semantic Versioning.
 
-## [Unreleased]
+## [0.2.0] - 2026-07-18
+
+### Added
+
+- Explicit `free`, `developer-id`, and `auto` release modes without making a paid Apple Developer membership mandatory.
+- Cryptographic Ed25519 verification of each staged update archive against its appcast enclosure.
+- CPU architecture, signing-class, Hardened Runtime, Apple Team ID, Gatekeeper, and notarization-staple diagnostics.
+- SHA-256 checksum files and deterministic `release-manifest.json` output.
+- `verify-update` command for independent Sparkle signature verification.
+- Schema v2 with safe schema v1 migration.
+- Dedicated free distribution, Developer ID, Gatekeeper, and update-signing guides.
+
+### Changed
+
+- CLI version is now 0.2.0.
+- Generated validation workflows use the reviewed v0.1.1 immutable commit.
+- Release preparation now copies the archive into an isolated transaction before inspecting, signing, checksumming, and publishing it.
+- Process output capture preserves useful beginning and ending diagnostics while bounding memory use for exceptionally large tool logs.
+- Website reveal animations now degrade safely so documentation stays visible when JavaScript is blocked or unavailable.
+
+### Security
+
+- Re-checks the staged archive size and SHA-256 digest after EdDSA verification to detect changes during release preparation.
+- Keeps temporary process output in a user-private directory and bounds data loaded back into memory.
 
 ## [0.1.1] - 2026-07-17
 

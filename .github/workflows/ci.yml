@@ -70,7 +70,8 @@ jobs:
           cp .build/release/sparklekit dist/SparkleReleaseKit/sparklekit
           cp -R .build/release/SparkleReleaseKit_SparkleReleaseKitCore.bundle dist/SparkleReleaseKit/
           cp scripts/install.sh dist/SparkleReleaseKit/install.sh
-          cp README.md CHANGELOG.md LICENSE dist/SparkleReleaseKit/
+          cp README.md CHANGELOG.md LICENSE SECURITY.md AGENTS.md llms.txt dist/SparkleReleaseKit/
+          cp -R AI docs examples schemas dist/SparkleReleaseKit/
           codesign --force --sign - --timestamp=none dist/SparkleReleaseKit/sparklekit
           codesign --verify --strict --verbose=2 dist/SparkleReleaseKit/sparklekit
           ditto -c -k --keepParent dist/SparkleReleaseKit SparkleReleaseKit-macos.zip
