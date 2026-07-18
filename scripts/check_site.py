@@ -41,7 +41,7 @@ class PageParser(HTMLParser):
 
 def local_target(page: Path, raw_target: str) -> Path | None:
     split = urlsplit(raw_target)
-    if split.scheme or split.netloc or raw_target.startswith(("mailto:", "#")):
+    if split.scheme or split.netloc or raw_target.startswith("mailto:"):
         return None
     decoded = unquote(split.path)
     if not decoded:
@@ -60,6 +60,7 @@ def local_target(page: Path, raw_target: str) -> Path | None:
 def main() -> int:
     errors: list[str] = []
     pages = sorted(SITE.rglob("*.html"))
+    parsed_pages: dict[Path, PageParser] = {}
     if not pages:
         errors.append("No HTML pages found.")
 
@@ -76,6 +77,7 @@ def main() -> int:
         except Exception as error:  # HTMLParser reports malformed parser state here.
             errors.append(f"{relative}: HTML parsing failed: {error}")
             continue
+        parsed_pages[page.resolve()] = parser
 
         if not parser.has_title:
             errors.append(f"{relative}: missing title")
@@ -96,6 +98,23 @@ def main() -> int:
                 continue
             if resolved is not None and not resolved.exists():
                 errors.append(f"{relative}: broken local target '{target}'")
+
+    for page, parser in parsed_pages.items():
+        relative = page.relative_to(ROOT)
+        for name, target in parser.targets:
+            if name != "href":
+                continue
+            split = urlsplit(target)
+            if split.scheme or split.netloc or not split.fragment:
+                continue
+            try:
+                resolved = local_target(page, target) or page
+            except ValueError:
+                continue
+            target_parser = parsed_pages.get(resolved.resolve())
+            fragment = unquote(split.fragment)
+            if target_parser is not None and fragment not in target_parser.ids:
+                errors.append(f"{relative}: missing local fragment '#{fragment}' in '{target}'")
 
     if errors:
         print("Website validation failed:", file=sys.stderr)

@@ -7,18 +7,23 @@ Primary documentation:
 - AI integration: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/AI/AI_INTEGRATION.md
 - Security model: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/SECURITY_MODEL.md
 - CLI reference: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/CLI_REFERENCE.md
+- Free distribution: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/FREE_DISTRIBUTION.md
+- Developer ID distribution: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/DEVELOPER_ID_DISTRIBUTION.md
+- Update signing: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/UPDATE_SIGNING.md
 - Configuration schema: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/schemas/sparklekit.schema.json
 - Official Sparkle documentation: https://sparkle-project.org/documentation/
 
 Agent workflow:
 1. Inspect the target macOS project.
-2. Run `sparklekit setup <project-path>`.
-3. Add only the public EdDSA key to sparklekit.json.
-4. Preview with `sparklekit integrate <project-path>`.
-5. Apply with `sparklekit integrate <project-path> --apply`.
-6. Follow the generated SparkleReleaseKit/INTEGRATION.md.
-7. Run `sparklekit doctor`, build in Release, and verify a real archive.
-8. Use `sparklekit test --json` and `sparklekit validate-feed --json` for deterministic completion evidence.
-9. Prepare release staging with `sparklekit prepare-release`; private signing keys remain in Keychain or protected CI secrets.
+2. Select `free`, `developer-id`, or `auto`; default to free when no paid Apple membership exists.
+3. Run `sparklekit setup <project-path> --release-mode <mode>`.
+4. Add only the public EdDSA key to sparklekit.json.
+5. Preview with `sparklekit integrate <project-path>`.
+6. Apply with `sparklekit integrate <project-path> --apply`.
+7. Follow the generated SparkleReleaseKit/INTEGRATION.md.
+8. Run `sparklekit doctor`, build in Release, and verify a real archive using the selected mode.
+9. Use `sparklekit test --json`, `sparklekit validate-feed --json`, and `sparklekit verify-update` for deterministic completion evidence.
+10. Prepare release staging with `sparklekit prepare-release`; private signing keys remain in Keychain or protected CI secrets.
 
 Never expose or commit private update-signing keys, Apple certificates, App Store Connect keys, passwords, or tokens.
+Never equate Developer ID or notarization with Sparkle EdDSA update signing. A paid Apple membership is optional; Sparkle EdDSA is not.

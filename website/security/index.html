@@ -5,7 +5,7 @@
   <meta name="description" content="SparkleReleaseKit security model for macOS update delivery.">
   <meta name="theme-color" content="#0d0e10"><link rel="canonical" href="https://leontofficial.github.io/SparkleReleaseKit/security/">
   <title>Security - SparkleReleaseKit</title>
-  <link rel="icon" href="../assets/logo.svg"><link rel="stylesheet" href="../styles.css"><script>document.documentElement.classList.add("js")</script>
+  <link rel="icon" href="../assets/logo.svg"><link rel="stylesheet" href="../styles.css">
 </head>
 <body>
   <a class="skip-link" href="#content">Skip to content</a>
@@ -15,10 +15,10 @@
     <div class="docs-layout">
       <nav class="docs-nav" aria-label="Security sections"><a href="#layers">Trust layers</a><a href="#secrets">Secrets</a><a href="#actions">CI</a><a href="#release">Release</a><a href="#report">Report</a></nav>
       <article class="article">
-        <section id="layers"><h2>Five complementary trust layers</h2><div class="grid two"><div class="card"><h3>HTTPS</h3><p>Protects feeds and downloads in transit.</p></div><div class="card"><h3>EdDSA</h3><p>Authenticates the archive to the installed app.</p></div><div class="card"><h3>Developer ID</h3><p>Binds the distributed code to an Apple identity.</p></div><div class="card"><h3>Notarization</h3><p>Adds Apple's automated scan and Gatekeeper ticket.</p></div></div></section>
+        <section id="layers"><h2>Five complementary trust layers</h2><div class="grid two"><div class="card"><h3>HTTPS</h3><p>Protects feeds and downloads in transit.</p></div><div class="card"><h3>Sparkle EdDSA</h3><p>Authenticates the exact update archive to the installed app in every mode.</p></div><div class="card"><h3>App code signing</h3><p>Provides structural integrity with ad-hoc signing or an Apple identity with Developer ID.</p></div><div class="card"><h3>Developer ID</h3><p>Optionally binds direct-distribution code to an Apple-verified developer identity.</p></div><div class="card"><h3>Notarization</h3><p>Optionally adds Apple's automated scan and Gatekeeper ticket.</p></div></div><div class="callout">The free route uses HTTPS, Sparkle EdDSA, checksums, a manifest, and ad-hoc app signing. Developer ID and notarization strengthen the Apple trust chain but never replace Sparkle signing.</div></section>
         <section id="secrets"><h2>Private means private</h2><p><code>SUPublicEDKey</code> is public and belongs in the app. The private EdDSA key, `.p12` certificates, `.p8` keys, passwords, and tokens belong only in Keychain or protected CI secrets.</p><div class="callout warning">Never paste private signing material into a coding-agent prompt, issue, log, configuration file, or commit.</div><p><a href="https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/KEY_MANAGEMENT.md">Read the key management and recovery guide.</a></p></section>
         <section id="actions"><h2>Least-privilege automation</h2><p>Validation jobs receive read-only repository access and no release secrets. Production signing should run in a protected environment, with reviewed actions pinned to commit SHAs and explicit permissions.</p></section>
-        <section id="release"><h2>Verify the release, not just the source</h2><p>Run tests, build Release, inspect code signing, notarize, staple, create the final ZIP and DMG, verify both archives, generate the signed appcast, and perform an older-to-newer test update before publication.</p></section>
+        <section id="release"><h2>Verify the release, not just the source</h2><p>Run tests, build Release, inspect architectures and code signing, create the final ZIP or DMG, verify the exact EdDSA signature, checksum, and manifest, then perform an older-to-newer test update. Developer ID releases additionally require notarization and staple validation.</p></section>
         <section id="report"><h2>Report a vulnerability privately</h2><p>Use GitHub private vulnerability reporting. Remove private keys, user data, and proprietary project source before submitting evidence.</p><a class="button primary" href="https://github.com/LeonTOfficial/SparkleReleaseKit/security/advisories/new">Open a private report</a></section>
       </article>
     </div>

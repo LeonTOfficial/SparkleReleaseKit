@@ -10,7 +10,7 @@ Sparkle updates install executable code. A release pipeline mistake can therefor
 4. **Apple notarization** lets Gatekeeper verify that Apple scanned the submitted software and issued a ticket.
 5. **GitHub Actions permissions and attestations** record how CI artifacts were produced.
 
-These layers complement one another; none is a reason to omit the others in a production app.
+HTTPS and Sparkle EdDSA are mandatory for the update channel. Apple Developer ID and notarization add a separate Apple-verified trust path, but they are optional in the supported free-distribution mode.
 
 ## Secret handling
 
@@ -25,12 +25,15 @@ SparkleReleaseKit ignores common private-key formats and `.sparklekit/private/`,
 ## Release signing
 
 - Use Sparkle's official `generate_appcast` to create EdDSA signatures.
-- Use Developer ID with Hardened Runtime for direct distribution.
-- Use `xcrun notarytool`, inspect the returned log, and staple the ticket.
+- For free distribution, prefer consistent ad-hoc signing and document Gatekeeper's one-time approval.
+- For optional Apple-verified distribution, use Developer ID with Hardened Runtime.
+- In Developer ID mode, use `xcrun notarytool`, inspect the returned log, and staple the ticket.
 - Sign nested code according to Apple's bundle rules before signing the outer app.
 - Do not use `codesign --deep` as a shortcut for release signing.
 
 `prepare-release` never auto-discovers `generate_appcast` from the target repository or the process `PATH`. Pass a reviewed official Sparkle executable with `--generate-appcast`, or deliberately set `SPARKLE_GENERATE_APPCAST`. That process can access the update key in Keychain, so a same-named executable from an untrusted checkout must never be run.
+
+After generation, SparkleReleaseKit independently verifies the Ed25519 signature against the exact archive bytes and checks the enclosure filename, size, and build version. This check is independent from `codesign`, Gatekeeper, and notarization.
 
 ## GitHub Actions
 
