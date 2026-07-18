@@ -8,7 +8,7 @@
   "required": ["$schema", "schemaVersion", "app", "project", "github", "updates", "distribution"],
   "properties": {
     "$schema": { "const": "https://leontofficial.github.io/SparkleReleaseKit/schema/sparklekit.schema.json" },
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "app": {
       "type": "object",
       "additionalProperties": false,
@@ -93,12 +93,69 @@
     "distribution": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["installer", "updateArchive", "notarization"],
+      "required": [
+        "installer",
+        "updateArchive",
+        "releaseMode",
+        "requireSparkleSignature",
+        "requireDeveloperID",
+        "requireNotarization",
+        "allowAdHocSigning",
+        "expectedArchitectures"
+      ],
       "properties": {
         "installer": { "enum": ["zip", "dmg"] },
         "updateArchive": { "enum": ["zip", "dmg"] },
-        "notarization": { "enum": ["required", "optional", "disabled"] }
-      }
+        "releaseMode": {
+          "enum": ["free", "developer-id", "auto"],
+          "description": "Independent free distribution, strict Apple-verified distribution, or capability-aware inspection."
+        },
+        "requireSparkleSignature": {
+          "const": true,
+          "description": "Sparkle EdDSA update authentication is mandatory in every release mode."
+        },
+        "requireDeveloperID": { "type": "boolean" },
+        "requireNotarization": { "type": "boolean" },
+        "allowAdHocSigning": { "type": "boolean" },
+        "expectedArchitectures": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 2,
+          "items": { "enum": ["arm64", "x86_64"] }
+        },
+        "expectedTeamIdentifier": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^[A-Z0-9]{10}$" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "releaseMode": { "const": "free" } } },
+          "then": {
+            "properties": {
+              "requireDeveloperID": { "const": false },
+              "requireNotarization": { "const": false },
+              "allowAdHocSigning": { "const": true }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "releaseMode": { "const": "developer-id" } } },
+          "then": {
+            "properties": {
+              "requireDeveloperID": { "const": true },
+              "requireNotarization": { "const": true },
+              "allowAdHocSigning": { "const": false }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "requireNotarization": { "const": true } } },
+          "then": { "properties": { "requireDeveloperID": { "const": true } } }
+        }
+      ]
     }
   }
 }

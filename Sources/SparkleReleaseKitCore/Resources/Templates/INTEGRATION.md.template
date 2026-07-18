@@ -2,6 +2,14 @@
 
 SparkleReleaseKit generated and validated the project-specific files. Two Xcode steps remain because Xcode does not expose a safe public command-line API for adding package products to arbitrary projects.
 
+## Understand the two signatures
+
+- **Sparkle EdDSA** authenticates the update archive and is required in every release mode.
+- **Ad-hoc app signing** is the supported free structural-signing path. It may require one Gatekeeper approval on first launch.
+- **Developer ID and notarization** are an optional Apple-verified route for teams with Apple Developer Program access.
+
+Developer ID never replaces Sparkle EdDSA. Follow the release mode selected in `sparklekit.json`; do not add or request Apple credentials when the project uses `free` mode.
+
 ## 1. Add Sparkle with Swift Package Manager
 
 1. Open `{{CONTAINER}}` in Xcode.

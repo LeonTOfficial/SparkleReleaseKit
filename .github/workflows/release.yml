@@ -41,7 +41,8 @@ jobs:
           cp "$product_dir/sparklekit" dist/SparkleReleaseKit/
           cp -R "$product_dir/SparkleReleaseKit_SparkleReleaseKitCore.bundle" dist/SparkleReleaseKit/
           cp scripts/install.sh dist/SparkleReleaseKit/install.sh
-          cp README.md CHANGELOG.md LICENSE dist/SparkleReleaseKit/
+          cp README.md CHANGELOG.md LICENSE SECURITY.md AGENTS.md llms.txt dist/SparkleReleaseKit/
+          cp -R AI docs examples schemas dist/SparkleReleaseKit/
           lipo -info dist/SparkleReleaseKit/sparklekit
           codesign --force --sign - --timestamp=none dist/SparkleReleaseKit/sparklekit
           codesign --verify --strict --verbose=2 dist/SparkleReleaseKit/sparklekit

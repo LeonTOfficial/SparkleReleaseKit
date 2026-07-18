@@ -16,7 +16,6 @@
   <title>SparkleReleaseKit - Secure macOS updates, made clear</title>
   <link rel="icon" href="assets/logo.svg">
   <link rel="stylesheet" href="styles.css">
-  <script>document.documentElement.classList.add("js")</script>
 </head>
 <body>
   <a class="skip-link" href="#content">Skip to content</a>
@@ -36,7 +35,7 @@
   <main id="content">
     <section class="hero">
       <div class="hero-content">
-        <div class="eyebrow">Sparkle 2.9.4 · Swift 6 · Open source</div>
+        <div class="eyebrow">Sparkle 2.9.4 · Swift 6 · Free and open source</div>
         <h1>Secure macOS updates, without the release-pipeline maze.</h1>
         <p class="lead">Detect an existing Xcode app, generate the Sparkle integration, protect signing material, and verify every release through one clear workflow built for developers and coding agents.</p>
         <div class="actions">
@@ -62,7 +61,22 @@
         <div class="grid three">
           <article class="card" data-reveal><div class="icon">01</div><h3>Detect</h3><p>Find the project, app style, shared scheme, bundle identifier, plist, and GitHub remote.</p></article>
           <article class="card" data-reveal><div class="icon">02</div><h3>Integrate</h3><p>Generate the updater, secure metadata, CI checks, release notes, backup, and project-specific guide.</p></article>
-          <article class="card" data-reveal><div class="icon">03</div><h3>Prove</h3><p>Build the real scheme, inspect release archives, validate the appcast, and produce structured evidence.</p></article>
+          <article class="card" data-reveal><div class="icon">03</div><h3>Prove</h3><p>Build the real scheme, inspect release archives, verify the EdDSA signature, and produce structured evidence.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="section">
+        <div class="section-heading" data-reveal>
+          <div class="eyebrow">Inclusive distribution</div>
+          <h2>Secure updates do not require a paid Apple membership.</h2>
+          <p>Sparkle update signing and Apple code signing solve different problems. Choose the path that matches the project instead of weakening update authentication.</p>
+        </div>
+        <div class="grid three mode-grid">
+          <article class="card mode-card" data-reveal><div class="mode-label free">Free</div><h3>Independent distribution</h3><p>Uses mandatory Sparkle EdDSA authentication, HTTPS, SHA-256, a release manifest, and a consistent ad-hoc app signature. Gatekeeper may require one first-launch approval.</p><a class="text-link" href="https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/FREE_DISTRIBUTION.md">Read the free path</a></article>
+          <article class="card mode-card" data-reveal><div class="mode-label apple">Apple verified</div><h3>Developer ID</h3><p>Adds an Apple identity, Hardened Runtime, Gatekeeper verification, and notarization. This stronger optional route needs Apple Developer Program access.</p><a class="text-link" href="https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/DEVELOPER_ID_DISTRIBUTION.md">Read the Developer ID path</a></article>
+          <article class="card mode-card" data-reveal><div class="mode-label auto">Auto</div><h3>Capability aware</h3><p>Inspects the finished artifact and reports the effective route. It never acquires credentials, changes identities, or submits software to Apple by itself.</p><a class="text-link" href="docs/#modes">Compare release modes</a></article>
         </div>
       </div>
     </section>
@@ -76,7 +90,7 @@
         </div>
         <div class="terminal" data-reveal aria-label="SparkleReleaseKit command example">
           <div class="terminal-bar"><span></span><span></span><span></span></div>
-          <pre><span class="prompt">$</span> <span class="command">sparklekit setup ~/Projects/MyApp</span>
+          <pre><span class="prompt">$</span> <span class="command">sparklekit setup ~/Projects/MyApp --release-mode free</span>
 
 <span class="result">SparkleReleaseKit
 Set up secure Sparkle updates
@@ -103,7 +117,7 @@ Success: Created sparklekit.json</span>
           <article class="step"><div><h3>Add the public key</h3><p>Sparkle keeps the private key in Keychain; only the public EdDSA key enters the app.</p></div></article>
           <article class="step"><div><h3>Review and apply</h3><p>Inspect every path, then generate the integration with timestamped backups.</p></div></article>
           <article class="step"><div><h3>Finish two Xcode steps</h3><p>Add the official package and keep the updater alive from app startup.</p></div></article>
-          <article class="step"><div><h3>Verify and stage the release</h3><p>Doctor, Release build, archive inspection, official appcast generation, and an older-to-newer test update complete the evidence.</p></div></article>
+          <article class="step"><div><h3>Verify and stage the release</h3><p>Doctor, Release build, architecture and code-signing inspection, exact EdDSA verification, checksums, manifest generation, and an older-to-newer test update complete the evidence.</p></div></article>
         </div>
       </div>
     </section>

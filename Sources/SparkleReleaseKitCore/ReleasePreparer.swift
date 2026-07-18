@@ -11,6 +11,9 @@ public enum ReleasePreparationError: LocalizedError {
     case generateAppcastFailed(String)
     case generatedAppcastMissing(URL)
     case archiveVerificationFailed(Int)
+    case archiveChangedDuringPreparation
+    case sparkleSignatureRequired
+    case updateSignatureFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -34,6 +37,12 @@ public enum ReleasePreparationError: LocalizedError {
             "generate_appcast completed without creating \(url.path)."
         case .archiveVerificationFailed(let count):
             "The release archive failed \(count) verification check(s)."
+        case .archiveChangedDuringPreparation:
+            "The staged release archive changed while it was being prepared. Start again from an immutable build artifact."
+        case .sparkleSignatureRequired:
+            "Release preparation requires Sparkle EdDSA signing. Set distribution.requireSparkleSignature to true."
+        case .updateSignatureFailed(let detail):
+            "The generated Sparkle update signature could not be verified: \(detail)"
         }
     }
 }
@@ -49,6 +58,7 @@ public struct ReleasePreparationOptions: Sendable {
     public var releaseNotesURLPrefix: String?
     public var phasedRolloutInterval: Int?
     public var replaceExisting: Bool
+    public var policyOverrides: ReleasePolicyOverrides
 
     public init(
         version: String,
@@ -60,7 +70,8 @@ public struct ReleasePreparationOptions: Sendable {
         downloadURLPrefix: String? = nil,
         releaseNotesURLPrefix: String? = nil,
         phasedRolloutInterval: Int? = nil,
-        replaceExisting: Bool = false
+        replaceExisting: Bool = false,
+        policyOverrides: ReleasePolicyOverrides = .init()
     ) {
         self.version = version
         self.archiveURL = archiveURL
@@ -72,6 +83,7 @@ public struct ReleasePreparationOptions: Sendable {
         self.releaseNotesURLPrefix = releaseNotesURLPrefix
         self.phasedRolloutInterval = phasedRolloutInterval
         self.replaceExisting = replaceExisting
+        self.policyOverrides = policyOverrides
     }
 }
 
@@ -88,24 +100,15 @@ public struct ReleasePreparer: Sendable {
         try ConfigurationStore().validate(configuration)
         try validateVersion(options.version)
         try validateKeychainAccount(options.keychainAccount)
+        let policy = try ReleaseVerificationPolicy(
+            distribution: configuration.distribution,
+            overrides: options.policyOverrides
+        )
+        guard policy.requireSparkleSignature else {
+            throw ReleasePreparationError.sparkleSignatureRequired
+        }
 
         let archive = options.archiveURL.standardizedFileURL
-        let inspection = try ReleaseVerifier().inspect(
-            archiveURL: archive,
-            expectedBundleIdentifier: configuration.app.bundleIdentifier,
-            notarizationRequired: configuration.distribution.notarization == .required
-        )
-        let failures = inspection.diagnostics.filter { $0.severity == .failure }
-        guard failures.isEmpty else {
-            throw ReleasePreparationError.archiveVerificationFailed(failures.count)
-        }
-        guard let metadata = inspection.metadata else {
-            throw ReleasePreparationError.archiveVerificationFailed(1)
-        }
-        guard metadata.shortVersion == options.version else {
-            throw ReleasePreparationError.versionMismatch(expected: options.version, found: metadata.shortVersion)
-        }
-
         let downloadPrefix = try validatedHTTPSPrefix(
             options.downloadURLPrefix
                 ?? "https://github.com/\(configuration.github.owner)/\(configuration.github.repository)/releases/download/v\(options.version)/"
@@ -113,7 +116,8 @@ public struct ReleasePreparer: Sendable {
         let releaseNotesURLPrefix = try options.releaseNotesURLPrefix.map(validatedHTTPSPrefix)
 
         let root = projectRoot.standardizedFileURL.resolvingSymlinksInPath()
-        let outputRoot = try options.outputRootURL?.standardizedFileURL
+        let outputRoot =
+            try options.outputRootURL?.standardizedFileURL
             ?? ProjectPathResolver.resolve(".sparklekit/releases", under: root)
         let finalDirectory = outputRoot.appendingPathComponent("v\(options.version)").standardizedFileURL
         if fileManager.fileExists(atPath: finalDirectory.path), !options.replaceExisting {
@@ -130,6 +134,22 @@ public struct ReleasePreparer: Sendable {
 
         let stagedArchive = transactionRoot.appendingPathComponent(archive.lastPathComponent)
         try fileManager.copyItem(at: archive, to: stagedArchive)
+        let inspection = try ReleaseVerifier().inspect(
+            archiveURL: stagedArchive,
+            expectedBundleIdentifier: configuration.app.bundleIdentifier,
+            policy: policy
+        )
+        let failures = inspection.diagnostics.filter { $0.severity == .failure }
+        guard failures.isEmpty else {
+            throw ReleasePreparationError.archiveVerificationFailed(failures.count)
+        }
+        guard let metadata = inspection.metadata, let artifact = inspection.artifact else {
+            throw ReleasePreparationError.archiveVerificationFailed(1)
+        }
+        guard metadata.shortVersion == options.version else {
+            throw ReleasePreparationError.versionMismatch(expected: options.version, found: metadata.shortVersion)
+        }
+
         let notesName = stagedArchive.deletingPathExtension().lastPathComponent + ".md"
         let stagedNotes = transactionRoot.appendingPathComponent(notesName)
         if let releaseNotes = options.releaseNotesURL {
@@ -170,6 +190,41 @@ public struct ReleasePreparer: Sendable {
         guard appcastFailures.isEmpty else {
             throw ReleasePreparationError.generateAppcastFailed("Generated appcast failed \(appcastFailures.count) validation check(s).")
         }
+        let signatureDiagnostic: Diagnostic
+        do {
+            signatureDiagnostic = try UpdateSignatureVerifier().verify(
+                archiveURL: stagedArchive,
+                appcast: appcastResult,
+                publicEDKey: configuration.updates.publicEDKey,
+                expectedBuildVersion: metadata.buildVersion
+            )
+        } catch {
+            throw ReleasePreparationError.updateSignatureFailed(error.localizedDescription)
+        }
+
+        let finalAttributes = try fileManager.attributesOfItem(atPath: stagedArchive.path)
+        let finalBytes = (finalAttributes[.size] as? NSNumber)?.int64Value ?? -1
+        let finalDigest = try FileDigest.sha256(of: stagedArchive)
+        guard finalBytes == artifact.archiveBytes, finalDigest == artifact.sha256 else {
+            throw ReleasePreparationError.archiveChangedDuringPreparation
+        }
+
+        let checksum = transactionRoot.appendingPathComponent(stagedArchive.lastPathComponent + ".sha256")
+        let checksumText = "\(finalDigest)  \(stagedArchive.lastPathComponent)\n"
+        try Data(checksumText.utf8).write(to: checksum, options: .atomic)
+
+        let manifest = ReleaseManifest(
+            releaseMode: artifact.effectiveReleaseMode,
+            metadata: metadata,
+            archive: stagedArchive.lastPathComponent,
+            artifact: artifact,
+            sparkleSignatureVerified: true,
+            appcast: appcast.lastPathComponent
+        )
+        let manifestURL = transactionRoot.appendingPathComponent("release-manifest.json")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        try encoder.encode(manifest).write(to: manifestURL, options: .atomic)
 
         var archivedPrevious: URL?
         if fileManager.fileExists(atPath: finalDirectory.path) {
@@ -199,8 +254,10 @@ public struct ReleasePreparer: Sendable {
             outputDirectory: finalDirectory,
             archiveURL: finalDirectory.appendingPathComponent(stagedArchive.lastPathComponent),
             appcastURL: finalDirectory.appendingPathComponent("appcast.xml"),
+            checksumURL: finalDirectory.appendingPathComponent(checksum.lastPathComponent),
+            manifestURL: finalDirectory.appendingPathComponent(manifestURL.lastPathComponent),
             metadata: metadata,
-            diagnostics: inspection.diagnostics + appcastResult.diagnostics
+            diagnostics: inspection.diagnostics + appcastResult.diagnostics + [signatureDiagnostic]
         )
     }
 
@@ -214,12 +271,13 @@ public struct ReleasePreparer: Sendable {
 
     private func validatedHTTPSPrefix(_ value: String) throws -> String {
         guard var components = URLComponents(string: value),
-              components.scheme?.lowercased() == "https",
-              components.host != nil,
-              components.user == nil,
-              components.password == nil,
-              components.query == nil,
-              components.fragment == nil else {
+            components.scheme?.lowercased() == "https",
+            components.host != nil,
+            components.user == nil,
+            components.password == nil,
+            components.query == nil,
+            components.fragment == nil
+        else {
             throw ReleasePreparationError.unsafeURL(value)
         }
         if !components.path.hasSuffix("/") { components.path += "/" }
@@ -231,8 +289,9 @@ public struct ReleasePreparer: Sendable {
 
     private func validateKeychainAccount(_ account: String) throws {
         guard !account.isEmpty,
-              account.count <= 128,
-              !account.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+            account.count <= 128,
+            !account.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+        else {
             throw ReleasePreparationError.unsafeKeychainAccount
         }
     }
@@ -240,16 +299,17 @@ public struct ReleasePreparer: Sendable {
     private func resolveGenerateAppcast(_ explicit: URL?) throws -> URL {
         var candidates: [URL] = []
         if let explicit {
-            candidates.append(explicit.pathExtension.isEmpty
-                ? explicit.appendingPathComponent("generate_appcast")
-                : explicit)
+            candidates.append(
+                explicit.pathExtension.isEmpty
+                    ? explicit.appendingPathComponent("generate_appcast")
+                    : explicit)
             candidates.append(explicit)
         }
         if let environmentPath = ProcessInfo.processInfo.environment["SPARKLE_GENERATE_APPCAST"], !environmentPath.isEmpty {
             candidates.append(URL(fileURLWithPath: environmentPath))
         }
         for candidate in candidates.map({ $0.standardizedFileURL.resolvingSymlinksInPath() })
-            where fileManager.isExecutableFile(atPath: candidate.path) {
+        where fileManager.isExecutableFile(atPath: candidate.path) {
             guard candidate.lastPathComponent == "generate_appcast" else {
                 throw ReleasePreparationError.invalidGenerateAppcast(candidate)
             }

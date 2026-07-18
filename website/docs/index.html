@@ -5,7 +5,7 @@
   <meta name="description" content="SparkleReleaseKit setup and integration documentation.">
   <meta name="theme-color" content="#0d0e10"><link rel="canonical" href="https://leontofficial.github.io/SparkleReleaseKit/docs/">
   <title>Documentation - SparkleReleaseKit</title>
-  <link rel="icon" href="../assets/logo.svg"><link rel="stylesheet" href="../styles.css"><script>document.documentElement.classList.add("js")</script>
+  <link rel="icon" href="../assets/logo.svg"><link rel="stylesheet" href="../styles.css">
 </head>
 <body>
   <a class="skip-link" href="#content">Skip to content</a>
@@ -13,24 +13,27 @@
   <main id="content">
     <section class="page-hero"><div class="inner"><div class="eyebrow">Documentation</div><h1>A short path from Xcode app to secure update.</h1><p class="lead">Follow the guided setup, review every generated change, and verify the actual release archive.</p></div></section>
     <div class="docs-layout">
-      <nav class="docs-nav" aria-label="Documentation sections"><a href="#requirements">Requirements</a><a href="#install">Install</a><a href="#setup">Set up</a><a href="#xcode">Xcode</a><a href="#verify">Verify</a><a href="#release">Release</a><a href="#agent">Coding agents</a></nav>
+      <nav class="docs-nav" aria-label="Documentation sections"><a href="#requirements">Requirements</a><a href="#install">Install</a><a href="#modes">Release modes</a><a href="#setup">Set up</a><a href="#xcode">Xcode</a><a href="#verify">Verify</a><a href="#release">Release</a><a href="#agent">Coding agents</a></nav>
       <article class="article">
-        <section id="requirements"><h2>Requirements</h2><p>Use macOS 13 or later, a current stable Xcode installation, Git, an existing macOS app target, and a shared scheme. Production releases should use Developer ID and notarization.</p></section>
+        <section id="requirements"><h2>Requirements</h2><p>Use macOS 13 or later, a current stable Xcode installation, Git, an existing macOS app target, and a shared scheme. A paid Apple Developer membership is optional; Sparkle EdDSA authentication is required in every release mode.</p></section>
         <section id="install"><h2>Install the toolkit</h2><p>Download the <a href="https://github.com/LeonTOfficial/SparkleReleaseKit/releases/latest/download/SparkleReleaseKit-macos.zip">latest tested macOS package</a>, extract it, open Terminal in its <code>SparkleReleaseKit</code> folder, then run:</p><pre>./install.sh
 sparklekit version</pre><p>Every release includes a SHA-256 checksum and GitHub artifact attestation. If macOS quarantines the currently non-notarized CLI, build it locally instead:</p><pre>git clone https://github.com/LeonTOfficial/SparkleReleaseKit.git
 cd SparkleReleaseKit
 ./scripts/bootstrap.sh
 ./scripts/install.sh</pre><div class="callout">Installation is user-local by default. SparkleReleaseKit does not need administrator access.</div></section>
-        <section id="setup"><h2>Detect and configure</h2><pre>sparklekit setup "/path/to/YourApp"</pre><p>Inspect the generated <code>sparklekit.json</code>. Generate the Sparkle EdDSA key once and add only its public key to <code>updates.publicEDKey</code>.</p><pre>sparklekit integrate "/path/to/YourApp"
+        <section id="modes"><h2>Choose a release mode</h2><div class="mode-summary"><div><strong><code>free</code></strong><span>Sparkle EdDSA stays mandatory. Ad-hoc app signing is accepted; Developer ID and notarization are reported as optional.</span></div><div><strong><code>developer-id</code></strong><span>Requires Developer ID, Hardened Runtime, Gatekeeper acceptance, and a valid notarization staple.</span></div><div><strong><code>auto</code></strong><span>Inspects the artifact and reports the strongest complete route without acquiring credentials or submitting to Apple.</span></div></div><div class="callout">Developer ID is not a Sparkle update signature. It is a separate, optional Apple trust layer.</div><div class="actions"><a class="button" href="https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/FREE_DISTRIBUTION.md">Free distribution</a><a class="button" href="https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/DEVELOPER_ID_DISTRIBUTION.md">Developer ID distribution</a></div></section>
+        <section id="setup"><h2>Detect and configure</h2><pre>sparklekit setup "/path/to/YourApp" --release-mode free</pre><p>Inspect the generated <code>sparklekit.json</code>. Generate the Sparkle EdDSA key once and add only its public key to <code>updates.publicEDKey</code>.</p><pre>sparklekit integrate "/path/to/YourApp"
 sparklekit integrate "/path/to/YourApp" --apply</pre><p>The first command is always a preview. Apply mode creates a timestamped backup before replacing a managed file.</p></section>
         <section id="xcode"><h2>Finish in Xcode</h2><ol><li>Add <code>https://github.com/sparkle-project/Sparkle</code> with Swift Package Manager.</li><li>Add the Sparkle product and generated updater file to the app target.</li><li>Keep <code>AppUpdater.shared</code> alive from startup.</li><li>Add a Check for Updates command.</li></ol><p>The generated <code>SparkleReleaseKit/INTEGRATION.md</code> contains code matched to the detected app style.</p></section>
         <section id="verify"><h2>Verify before publishing</h2><pre>sparklekit doctor "/path/to/YourApp" --json
 sparklekit test "/path/to/YourApp" --json
-sparklekit verify "/path/to/YourApp.zip" --project "/path/to/YourApp" --json</pre><p>Structured reports use stable severity, detail, and remediation fields. File presence alone does not prove that an update can install.</p></section>
+sparklekit verify "/path/to/YourApp.zip" --project "/path/to/YourApp" --release-mode free --json
+sparklekit verify-update "/path/to/YourApp.zip" --appcast "/path/to/appcast.xml" --version 120</pre><p>Structured reports use stable severity, detail, and remediation fields. The final command cryptographically verifies that the appcast signature authenticates the exact archive bytes.</p></section>
         <section id="release"><h2>Prepare the signed feed</h2><pre>sparklekit prepare-release "/path/to/YourApp-1.2.0.zip" \
   --project "/path/to/YourApp" \
   --version 1.2.0 \
   --notes "/path/to/release-notes.md" \
+  --release-mode free \
   --generate-appcast "/path/to/Sparkle/bin/generate_appcast"</pre><p>The official Sparkle tool reads the private key from macOS Keychain. Review the isolated stage, validate its feed, and test an older real app build before publication.</p></section>
         <section id="agent"><h2>Use a coding agent</h2><p>Ask the agent to read <code>AGENTS.md</code> and <code>AI/AI_INTEGRATION.md</code> first. The protocol defines the safe edit boundary, exact commands, prohibited secret handling, and required completion evidence.</p><div class="actions"><a class="button" href="https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/AI/AI_INTEGRATION.md">Open AI integration protocol</a><a class="button" href="https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/CLI_REFERENCE.md">Open CLI reference</a></div></section>
       </article>

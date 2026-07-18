@@ -12,10 +12,12 @@ do {
     let code: Int32
     if let mapped {
         code = mapped.exitCode
-    } else if error is ConfigurationError {
+    } else if error is ConfigurationError || error is ReleasePolicyError {
         code = 65
     } else if error is ProjectDetectionError {
         code = 66
+    } else if error is UpdateSignatureVerificationError {
+        code = 2
     } else if error is IntegrationError || error is ReleasePreparationError || error is XcodeBuildValidationError {
         code = 78
     } else {

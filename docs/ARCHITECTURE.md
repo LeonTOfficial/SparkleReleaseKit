@@ -14,15 +14,15 @@ The toolkit deliberately does not rewrite arbitrary `project.pbxproj` files. Xco
 
 ## Configuration
 
-`sparklekit.json` is the source of truth for public integration metadata. It is described by a JSON Schema and intentionally has no private-key field. The runtime rejects unknown fields rather than letting `Codable` silently ignore them, and a non-empty public key must decode to exactly 32 Ed25519 bytes.
+`sparklekit.json` is the source of truth for public integration metadata. Schema v2 models free, Developer ID, and auto release policies explicitly and migrates schema v1 in memory. It intentionally has no private-key field. The runtime rejects unknown fields rather than letting `Codable` silently ignore them, and a non-empty public key must decode to exactly 32 Ed25519 bytes.
 
 ## Release boundary
 
-SparkleReleaseKit does not invent a signing format. `prepare-release` verifies an already packaged app and invokes Sparkle's official `generate_appcast` executable. Its default private-key source is macOS Keychain. Output is prepared in an ignored staging directory and is never published implicitly.
+SparkleReleaseKit does not invent a signing format. `prepare-release` verifies an already packaged app and invokes Sparkle's official `generate_appcast` executable. Its default private-key source is macOS Keychain. The toolkit then verifies the resulting Ed25519 signature with CryptoKit, emits SHA-256 and a deterministic manifest, and never publishes implicitly.
 
-The reusable GitHub workflow builds caller projects without distribution credentials. Production Developer ID signing and notarization remain owned by the application repository and a protected release environment.
+The reusable GitHub workflow builds caller projects without distribution credentials. Optional Developer ID signing and notarization remain owned by the application repository and a protected release environment.
 
-Archive inspection performs a ZIP preflight before extraction, caps entry and expansion counts, rejects unsafe member paths, and verifies that extracted symbolic links remain inside the temporary root. Code-sign verification includes nested code; Gatekeeper failure becomes mandatory when `distribution.notarization` is `required` and remains an explicit warning for local or ad-hoc builds.
+Archive inspection performs a ZIP preflight before extraction, caps entry and expansion counts, rejects unsafe member paths, and verifies that extracted symbolic links remain inside the temporary root. Verification classifies signatures and architectures explicitly. Gatekeeper and staple failures block Developer ID mode and remain visible warnings in free mode.
 
 ## Extensibility
 

@@ -1,5 +1,7 @@
+import CryptoKit
 import Foundation
 import Testing
+
 @testable import SparkleReleaseKitCore
 
 @Suite("Release workflow")
@@ -8,8 +10,15 @@ struct ReleaseWorkflowTests {
     func preparesRelease() throws {
         let fixture = try makeSignedArchive()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let tool = try makeFakeGenerateAppcast(in: fixture.root)
-        let configuration = fixtureConfiguration()
+        let signingKey = Curve25519.Signing.PrivateKey()
+        let tool = try makeFakeGenerateAppcast(
+            in: fixture.root,
+            archive: fixture.archive,
+            signingKey: signingKey
+        )
+        let configuration = fixtureConfiguration(
+            publicKey: signingKey.publicKey.rawRepresentation.base64EncodedString()
+        )
 
         let result = try ReleasePreparer().prepare(
             projectRoot: fixture.root,
@@ -25,7 +34,17 @@ struct ReleaseWorkflowTests {
         #expect(result.metadata.shortVersion == "1.2.0")
         #expect(FileManager.default.fileExists(atPath: result.archiveURL.path))
         #expect(FileManager.default.fileExists(atPath: result.appcastURL.path))
+        #expect(FileManager.default.fileExists(atPath: result.checksumURL.path))
+        #expect(FileManager.default.fileExists(atPath: result.manifestURL.path))
         #expect(!result.diagnostics.contains { $0.severity == .failure })
+        let manifest = try JSONDecoder().decode(ReleaseManifest.self, from: Data(contentsOf: result.manifestURL))
+        #expect(manifest.sparkleSignatureVerified)
+        #expect(manifest.archive == result.archiveURL.lastPathComponent)
+        #expect(manifest.sha256.count == 64)
+        let stagedDigest = try FileDigest.sha256(of: result.archiveURL)
+        #expect(manifest.sha256 == stagedDigest)
+        let checksum = try String(contentsOf: result.checksumURL, encoding: .utf8)
+        #expect(checksum == "\(manifest.sha256)  \(result.archiveURL.lastPathComponent)\n")
     }
 
     @Test("Refuses a release version that differs from the app bundle")
@@ -86,13 +105,21 @@ struct ReleaseWorkflowTests {
         let diskImage = fixture.root.appendingPathComponent("Example.App.1.2.0.dmg")
         let create = try ProcessRunner().run(
             "/usr/bin/hdiutil",
-            arguments: ["create", "-quiet", "-volname", "Example App", "-srcfolder", payload.path, "-ov", "-format", "UDZO", diskImage.path]
+            arguments: [
+                "create", "-quiet", "-volname", "Example App", "-srcfolder", payload.path, "-ov", "-format", "UDZO", diskImage.path,
+            ]
         )
         try #require(create.status == 0, Comment(rawValue: create.standardError))
 
         let result = try ReleaseVerifier().inspect(archiveURL: diskImage)
 
-        #expect(result.metadata?.bundleIdentifier == "com.example.app")
+        let diagnosticSummary = result.diagnostics
+            .map { "[\($0.severity.rawValue)] \($0.title): \($0.detail)" }
+            .joined(separator: "\n")
+        #expect(
+            result.metadata?.bundleIdentifier == "com.example.app",
+            Comment(rawValue: diagnosticSummary)
+        )
         #expect(!result.diagnostics.contains { $0.severity == .failure && $0.title == "Extracted paths" })
     }
 
@@ -133,9 +160,10 @@ struct ReleaseWorkflowTests {
 
         let result = try ReleaseVerifier().inspect(archiveURL: archive)
 
-        #expect(result.diagnostics.contains {
-            $0.severity == .failure && $0.title == "Application bundle" && $0.detail.contains("multiple")
-        })
+        #expect(
+            result.diagnostics.contains {
+                $0.severity == .failure && $0.title == "Application bundle" && $0.detail.contains("multiple")
+            })
     }
 
     @Test("Rejects a hidden second application in an update archive")
@@ -200,6 +228,33 @@ struct ReleaseWorkflowTests {
         }
     }
 
+    @Test("Accepts ad-hoc signing in free mode and rejects it in Developer ID mode")
+    func enforcesReleaseModeSigningPolicy() throws {
+        let fixture = try makeSignedArchive()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let freeResult = try ReleaseVerifier().inspect(
+            archiveURL: fixture.archive,
+            expectedBundleIdentifier: "com.example.app",
+            policy: .free
+        )
+        #expect(freeResult.artifact?.signingKind == .adHoc)
+        #expect(!freeResult.diagnostics.contains { $0.severity == .failure })
+
+        let developerPolicy = try ReleaseVerificationPolicy(
+            distribution: .init(releaseMode: .developerID, expectedArchitectures: [])
+        )
+        let developerResult = try ReleaseVerifier().inspect(
+            archiveURL: fixture.archive,
+            expectedBundleIdentifier: "com.example.app",
+            policy: developerPolicy
+        )
+        #expect(
+            developerResult.diagnostics.contains {
+                $0.severity == .failure && $0.title == "Developer ID requirement"
+            })
+    }
+
     private func makeSignedArchive() throws -> (root: URL, archive: URL) {
         let manager = FileManager.default
         let root = manager.temporaryDirectory.appendingPathComponent("SparkleRelease-\(UUID().uuidString)")
@@ -237,8 +292,10 @@ struct ReleaseWorkflowTests {
         let frameworkData = try PropertyListSerialization.data(fromPropertyList: frameworkPlist, format: .xml, options: 0)
         try frameworkData.write(to: frameworkResources.appendingPathComponent("Info.plist"))
         try manager.createSymbolicLink(atPath: framework.appendingPathComponent("Versions/Current").path, withDestinationPath: "A")
-        try manager.createSymbolicLink(atPath: framework.appendingPathComponent("Sparkle").path, withDestinationPath: "Versions/Current/Sparkle")
-        try manager.createSymbolicLink(atPath: framework.appendingPathComponent("Resources").path, withDestinationPath: "Versions/Current/Resources")
+        try manager.createSymbolicLink(
+            atPath: framework.appendingPathComponent("Sparkle").path, withDestinationPath: "Versions/Current/Sparkle")
+        try manager.createSymbolicLink(
+            atPath: framework.appendingPathComponent("Resources").path, withDestinationPath: "Versions/Current/Resources")
 
         let frameworkSign = try ProcessRunner().run("/usr/bin/codesign", arguments: ["--force", "--sign", "-", framework.path])
         try #require(frameworkSign.status == 0, Comment(rawValue: frameworkSign.standardError))
@@ -251,26 +308,31 @@ struct ReleaseWorkflowTests {
         return (root, archive)
     }
 
-    private func makeFakeGenerateAppcast(in root: URL) throws -> URL {
+    private func makeFakeGenerateAppcast(
+        in root: URL,
+        archive: URL,
+        signingKey: Curve25519.Signing.PrivateKey
+    ) throws -> URL {
         let url = root.appendingPathComponent("generate_appcast")
-        let signature = Data(repeating: 0x41, count: 64).base64EncodedString()
+        let archiveData = try Data(contentsOf: archive, options: [.mappedIfSafe])
+        let signature = try signingKey.signature(for: archiveData).base64EncodedString()
         let script = #"""
-        #!/bin/sh
-        set -eu
-        stage=""
-        for argument in "$@"; do stage="$argument"; done
-        archive="$(find "$stage" -maxdepth 1 -name '*.zip' -print -quit)"
-        name="$(basename "$archive")"
-        length="$(stat -f '%z' "$archive")"
-        cat > "$stage/appcast.xml" <<XML
-        <?xml version="1.0" encoding="utf-8"?>
-        <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
-          <channel><title>Example updates</title><item><title>1.2.0</title>
-            <enclosure url="https://github.com/example/example-app/releases/download/v1.2.0/$name" sparkle:version="120" length="$length" sparkle:edSignature="\#(signature)" />
-          </item></channel>
-        </rss>
-        XML
-        """#
+            #!/bin/sh
+            set -eu
+            stage=""
+            for argument in "$@"; do stage="$argument"; done
+            archive="$(find "$stage" -maxdepth 1 -name '*.zip' -print -quit)"
+            name="$(basename "$archive")"
+            length="$(stat -f '%z' "$archive")"
+            cat > "$stage/appcast.xml" <<XML
+            <?xml version="1.0" encoding="utf-8"?>
+            <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+              <channel><title>Example updates</title><item><title>1.2.0</title>
+                <enclosure url="https://github.com/example/example-app/releases/download/v1.2.0/$name" sparkle:version="120" length="$length" sparkle:edSignature="\#(signature)" />
+              </item></channel>
+            </rss>
+            XML
+            """#
         try script.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         return url

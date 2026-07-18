@@ -4,7 +4,7 @@ This guide adds Sparkle updates to a regular macOS `.app` built with Xcode.
 
 ## Before you begin
 
-You need macOS 13 or later, a current stable Xcode installation, Git, a shared app scheme, and a GitHub repository. Production distribution should also use an Apple Developer ID certificate and notarization.
+You need macOS 13 or later, a current stable Xcode installation, Git, a shared app scheme, and a GitHub repository. A paid Apple Developer membership is optional: use free mode without it, or Developer ID mode for Apple's verified route.
 
 ## Install SparkleReleaseKit
 
@@ -28,7 +28,7 @@ Restart Terminal if `~/.local/bin` was newly added to your `PATH`.
 ## Detect and configure the app
 
 ```bash
-sparklekit setup "/path/to/YourApp"
+sparklekit setup "/path/to/YourApp" --release-mode free
 ```
 
 Inspect the generated `sparklekit.json`. The configuration contains public project metadata only.
@@ -67,10 +67,13 @@ Prepare the signed appcast stage with Sparkle's official tool:
 sparklekit prepare-release "/path/to/YourApp-1.2.0.zip" \
   --project "/path/to/YourApp" \
   --version 1.2.0 \
+  --release-mode free \
   --notes "/path/to/release-notes.md" \
   --generate-appcast "/path/to/Sparkle/bin/generate_appcast"
 ```
 
-Review `.sparklekit/releases/v1.2.0/`, then test a real update from an older version using a separate test feed before publishing the production feed.
+Review `.sparklekit/releases/v1.2.0/`. It contains the update archive, appcast, notes, checksum, and release manifest. Then test a real update from an older version using a separate test feed before publishing the production feed.
+
+Read [Free distribution](FREE_DISTRIBUTION.md) or [Developer ID distribution](DEVELOPER_ID_DISTRIBUTION.md) for the complete path you selected.
 
 All diagnostic commands support `--json`. Coding agents and CI should prefer that mode because it provides stable severity, title, detail, and remediation fields.

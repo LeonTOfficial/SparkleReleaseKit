@@ -1,5 +1,6 @@
 const revealElements = document.querySelectorAll("[data-reveal]");
 if ("IntersectionObserver" in window) {
+  document.documentElement.classList.add("reveal-ready");
   const observer = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       if (entry.isIntersecting) {

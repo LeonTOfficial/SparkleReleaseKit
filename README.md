@@ -14,6 +14,8 @@ SparkleReleaseKit is a human-friendly and AI-friendly toolkit around [Sparkle 2]
 
 It does **not** replace or fork Sparkle. Sparkle remains the secure update engine; SparkleReleaseKit makes the surrounding setup reproducible and difficult to misconfigure.
 
+**A paid Apple Developer membership is optional.** Free mode combines Sparkle EdDSA update authentication, HTTPS, checksums, release manifests, and ad-hoc app signing. Developer ID and notarization remain a stronger optional Apple-verified route, not a requirement for secure Sparkle signatures.
+
 ## What it does
 
 - Detects `.xcodeproj` and `.xcworkspace` projects.
@@ -27,10 +29,12 @@ It does **not** replace or fork Sparkle. Sparkle remains the secure update engin
 - Protects private keys, certificates, backups, and release staging files.
 - Previews every integration change before writing anything.
 - Creates a timestamped backup and restores its own changes if integration fails.
-- Verifies ZIP and DMG archives, safe extraction paths, expansion limits, bundle metadata, nested code signatures, Gatekeeper status, and embedded Sparkle.
+- Supports explicit `free`, `developer-id`, and capability-aware `auto` release modes.
+- Verifies ZIP and DMG archives, safe extraction paths, expansion limits, bundle metadata, CPU architectures, signing class, Team ID, Hardened Runtime, Gatekeeper, notarization staples, and embedded Sparkle.
 - Runs Xcode package resolution and a credential-free Release build with `sparklekit test`.
 - Validates appcast structure, credential-free HTTPS enclosure URLs, versions, lengths, and exact 64-byte Ed25519 signature fields.
-- Stages a signed archive and invokes Sparkle's official `generate_appcast` through `prepare-release`.
+- Cryptographically verifies the Ed25519 signature against the exact staged archive, not merely its presence.
+- Stages a signed archive, SHA-256 checksum, deterministic release manifest, release notes, and appcast through `prepare-release`.
 - Emits stable JSON from diagnostic commands so coding agents and CI can act on exact results.
 - Includes instructions designed for both people and coding agents.
 
@@ -70,6 +74,12 @@ Preview and apply the integration:
 ./sparklekit test "/path/to/YourApp"
 ```
 
+The generated configuration defaults to free, universal distribution. Choose another policy explicitly when needed:
+
+```bash
+sparklekit setup "/path/to/YourApp" --release-mode free --architectures arm64,x86_64
+```
+
 Finish the two clearly documented Xcode steps in `YourApp/SparkleReleaseKit/INTEGRATION.md`:
 
 1. Add `https://github.com/sparkle-project/Sparkle` with Swift Package Manager.
@@ -83,7 +93,7 @@ SparkleReleaseKit removes repetitive setup, but it does not pretend that every X
 
 1. Attach the official Sparkle package product to the correct application target.
 2. Connect the generated updater to the app lifecycle and expose **Check for Updates...**.
-3. Own Developer ID signing, Hardened Runtime, and Apple notarization credentials.
+3. Choose either the documented free/ad-hoc path or the optional Developer ID/notarization path.
 4. Test one real older build updating to the new build before a production rollout.
 
 Those boundaries are part of the security design, not missing polish.
@@ -94,7 +104,7 @@ Those boundaries are part of the security design, not missing polish.
 
 The CLI rejects unknown or duplicated options instead of silently guessing. Archive verification rejects path traversal, escaping symbolic links, unreasonable expansion sizes, malformed metadata, and mismatched bundle identifiers before a feed can be staged.
 
-For production distribution, use Developer ID signing, Hardened Runtime, HTTPS, Sparkle EdDSA signatures, and Apple notarization. See [Security](docs/SECURITY_MODEL.md).
+Every release path requires HTTPS and Sparkle EdDSA authentication. Developer ID, Hardened Runtime, and Apple notarization are optional unless `developer-id` mode is selected. See [Security](docs/SECURITY_MODEL.md).
 
 ## Commands
 
@@ -104,6 +114,7 @@ sparklekit integrate [project-path] [--apply]
 sparklekit doctor [project-path] [--json]
 sparklekit test [project-path] [--json]
 sparklekit verify <archive.zip|archive.dmg> [--project path] [--json]
+sparklekit verify-update <archive> --appcast PATH --version BUILD [options]
 sparklekit validate-feed <appcast.xml> [--json]
 sparklekit prepare-release <archive> --version X.Y.Z [options]
 sparklekit version
@@ -119,17 +130,18 @@ The default location is `~/.local/bin/sparklekit`; no administrator password is 
 
 ## Prepare a release safely
 
-Build, Developer-ID sign, and notarize your app with your existing Xcode release process first. Then let SparkleReleaseKit verify the exact update ZIP and create an isolated signed appcast stage:
+Build and package your app first. Free projects can use a consistent ad-hoc signature; Apple Developer Program members can instead use Developer ID and notarization. Then let SparkleReleaseKit verify the exact update ZIP and create an isolated signed appcast stage:
 
 ```bash
 sparklekit prepare-release "/path/to/MyApp-1.2.0.zip" \
   --project "/path/to/MyApp" \
   --version 1.2.0 \
+  --release-mode free \
   --notes "/path/to/release-notes.md" \
   --generate-appcast "/path/to/Sparkle/bin/generate_appcast"
 ```
 
-The official Sparkle tool reads the private key from macOS Keychain. SparkleReleaseKit never accepts that private key in `sparklekit.json`, command output, or a generated file. The prepared archive, appcast, and notes are placed in `.sparklekit/releases/v1.2.0/` for review; publication is deliberately separate and explicit.
+The official Sparkle tool reads the private key from macOS Keychain. SparkleReleaseKit never accepts that private key in `sparklekit.json`, command output, or a generated file. The prepared archive, appcast, notes, SHA-256 checksum, and `release-manifest.json` are placed in `.sparklekit/releases/v1.2.0/` for review; publication is deliberately separate and explicit.
 
 ## For coding agents
 
@@ -152,6 +164,10 @@ The repository contains `AGENTS.md`, `llms.txt`, a JSON Schema, deterministic co
 - [AppKit integration](docs/APPKIT.md)
 - [SwiftUI integration](docs/SWIFTUI.md)
 - [Release process](docs/RELEASE_PROCESS.md)
+- [Free and independent distribution](docs/FREE_DISTRIBUTION.md)
+- [Developer ID distribution](docs/DEVELOPER_ID_DISTRIBUTION.md)
+- [Gatekeeper and first launch](docs/GATEKEEPER.md)
+- [Sparkle update signing](docs/UPDATE_SIGNING.md)
 - [Security model](docs/SECURITY_MODEL.md)
 - [Update key management](docs/KEY_MANAGEMENT.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
@@ -161,7 +177,7 @@ The repository contains `AGENTS.md`, `llms.txt`, a JSON Schema, deterministic co
 
 ## Current scope
 
-Version 0.1 focuses on regular macOS `.app` bundles built by Xcode and ZIP or DMG distribution. Package installers, external bundles, and unattended Developer ID credential provisioning are intentionally outside the initial scope. Those workflows need different authorization and should not be guessed automatically.
+Version 0.2 focuses on regular macOS `.app` bundles built by Xcode and ZIP or DMG distribution through either a free/ad-hoc or optional Developer ID path. Package installers, external bundles, credential provisioning, and automatic Apple submissions remain outside the scope because those workflows require project-specific authorization.
 
 ## Credits
 

@@ -13,6 +13,9 @@ public struct ProcessResult: Sendable {
 }
 
 public struct ProcessRunner: Sendable {
+    private static let maximumCapturedBytes = 8 * 1_024 * 1_024
+    private static let capturedEdgeBytes = maximumCapturedBytes / 2
+
     public init() {}
 
     @discardableResult
@@ -36,6 +39,7 @@ public struct ProcessRunner: Sendable {
         let captureRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("SparkleReleaseKit-Process-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: captureRoot, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: captureRoot.path)
         defer { try? FileManager.default.removeItem(at: captureRoot) }
 
         let stdoutURL = captureRoot.appendingPathComponent("stdout")
@@ -58,8 +62,8 @@ public struct ProcessRunner: Sendable {
             throw error
         }
 
-        let stdout = (try? Data(contentsOf: stdoutURL)) ?? Data()
-        let stderr = (try? Data(contentsOf: stderrURL)) ?? Data()
+        let stdout = (try? Self.readCapturedOutput(at: stdoutURL)) ?? Data()
+        let stderr = (try? Self.readCapturedOutput(at: stderrURL)) ?? Data()
         return ProcessResult(
             status: process.terminationStatus,
             standardOutput: String(decoding: stdout, as: UTF8.self)
@@ -67,5 +71,22 @@ public struct ProcessRunner: Sendable {
             standardError: String(decoding: stderr, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         )
+    }
+
+    private static func readCapturedOutput(at url: URL) throws -> Data {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let byteCount = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        guard byteCount > UInt64(maximumCapturedBytes) else {
+            return try Data(contentsOf: url, options: [.mappedIfSafe])
+        }
+
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let head = try handle.read(upToCount: capturedEdgeBytes) ?? Data()
+        try handle.seek(toOffset: byteCount - UInt64(capturedEdgeBytes))
+        let tail = try handle.read(upToCount: capturedEdgeBytes) ?? Data()
+        let omitted = byteCount - UInt64(head.count + tail.count)
+        let marker = Data("\n... [SparkleReleaseKit omitted \(omitted) output bytes] ...\n".utf8)
+        return head + marker + tail
     }
 }
