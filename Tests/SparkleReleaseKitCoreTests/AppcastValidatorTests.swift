@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import SparkleReleaseKitCore
 
 @Suite("Appcast validation")
@@ -7,26 +8,30 @@ struct AppcastValidatorTests {
     @Test("Accepts a structurally signed HTTPS appcast")
     func acceptsValidFeed() throws {
         let signature = Data(repeating: 0x41, count: 64).base64EncodedString()
-        let feed = try writeFeed(enclosure: """
-        <enclosure url="https://github.com/example/app/releases/download/v1.2.0/App.zip"
-          sparkle:version="120" length="42" type="application/octet-stream"
-          sparkle:edSignature="\(signature)" />
-        """)
+        let feed = try writeFeed(
+            enclosure: """
+                <enclosure url="https://github.com/example/app/releases/download/v1.2.0/App.zip"
+                  sparkle:version="120" length="42" type="application/octet-stream"
+                  sparkle:edSignature="\(signature)" />
+                """)
         defer { try? FileManager.default.removeItem(at: feed.deletingLastPathComponent()) }
 
         let result = try AppcastValidator().validate(fileURL: feed)
 
         #expect(result.itemCount == 1)
         #expect(result.versions == ["120"])
+        #expect(result.enclosures.count == 1)
+        #expect(result.enclosures.first?.length == 42)
         #expect(!result.diagnostics.contains { $0.severity == .failure })
     }
 
     @Test("Rejects credentials in download URLs and short signatures")
     func rejectsCredentialsAndShortSignature() throws {
-        let feed = try writeFeed(enclosure: """
-        <enclosure url="https://user:password@example.com/App.zip"
-          sparkle:version="120" length="42" sparkle:edSignature="QUFBQQ==" />
-        """)
+        let feed = try writeFeed(
+            enclosure: """
+                <enclosure url="https://user:password@example.com/App.zip"
+                  sparkle:version="120" length="42" sparkle:edSignature="QUFBQQ==" />
+                """)
         defer { try? FileManager.default.removeItem(at: feed.deletingLastPathComponent()) }
 
         let result = try AppcastValidator().validate(fileURL: feed)
@@ -37,10 +42,11 @@ struct AppcastValidatorTests {
     @Test("Rejects query-bearing archive URLs")
     func rejectsArchiveURLQuery() throws {
         let signature = Data(repeating: 0x41, count: 64).base64EncodedString()
-        let url = try writeFeed(enclosure: """
-        <enclosure url="https://example.com/App.zip?token=secret&amp;channel=stable"
-          sparkle:version="1" length="100" sparkle:edSignature="\(signature)" />
-        """)
+        let url = try writeFeed(
+            enclosure: """
+                <enclosure url="https://example.com/App.zip?token=secret&amp;channel=stable"
+                  sparkle:version="1" length="100" sparkle:edSignature="\(signature)" />
+                """)
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
 
         let result = try AppcastValidator().validate(fileURL: url)
@@ -50,9 +56,10 @@ struct AppcastValidatorTests {
 
     @Test("Rejects HTTP downloads and missing signatures")
     func rejectsUnsafeFeed() throws {
-        let feed = try writeFeed(enclosure: """
-        <enclosure url="http://example.com/App.zip" sparkle:version="120" length="42" />
-        """)
+        let feed = try writeFeed(
+            enclosure: """
+                <enclosure url="http://example.com/App.zip" sparkle:version="120" length="42" />
+                """)
         defer { try? FileManager.default.removeItem(at: feed.deletingLastPathComponent()) }
 
         let result = try AppcastValidator().validate(fileURL: feed)
@@ -80,10 +87,11 @@ struct AppcastValidatorTests {
     @Test("Rejects ambiguous items with multiple enclosures")
     func rejectsMultipleEnclosures() throws {
         let signature = Data(repeating: 0x41, count: 64).base64EncodedString()
-        let feed = try writeFeed(enclosure: """
-        <enclosure url="https://example.com/One.zip" sparkle:version="120" length="42" sparkle:edSignature="\(signature)" />
-        <enclosure url="https://example.com/Two.zip" sparkle:version="121" length="43" sparkle:edSignature="\(signature)" />
-        """)
+        let feed = try writeFeed(
+            enclosure: """
+                <enclosure url="https://example.com/One.zip" sparkle:version="120" length="42" sparkle:edSignature="\(signature)" />
+                <enclosure url="https://example.com/Two.zip" sparkle:version="121" length="43" sparkle:edSignature="\(signature)" />
+                """)
         defer { try? FileManager.default.removeItem(at: feed.deletingLastPathComponent()) }
 
         let result = try AppcastValidator().validate(fileURL: feed)

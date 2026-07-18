@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   validate:
-    uses: LeonTOfficial/SparkleReleaseKit/.github/workflows/reusable-validate.yml@b92f782ecef82a4e2117f2d67177c5b4400e8169 # v0.1.0
+    uses: LeonTOfficial/SparkleReleaseKit/.github/workflows/reusable-validate.yml@6dc0f343831f3e05d16e57d4c433c262386e1943 # v0.1.1
     with:
       container: {{CONTAINER_YAML}}
       scheme: {{SCHEME_YAML}}

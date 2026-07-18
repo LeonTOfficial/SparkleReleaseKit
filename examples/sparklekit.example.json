@@ -7,8 +7,16 @@
     "style": "swiftUI"
   },
   "distribution": {
+    "allowAdHocSigning": true,
+    "expectedArchitectures": [
+      "arm64",
+      "x86_64"
+    ],
     "installer": "dmg",
-    "notarization": "required",
+    "releaseMode": "free",
+    "requireDeveloperID": false,
+    "requireNotarization": false,
+    "requireSparkleSignature": true,
     "updateArchive": "zip"
   },
   "github": {
@@ -22,7 +30,7 @@
     "infoPlist": "My App/Info.plist",
     "scheme": "My App"
   },
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "updates": {
     "automaticChecks": true,
     "automaticDownloads": false,

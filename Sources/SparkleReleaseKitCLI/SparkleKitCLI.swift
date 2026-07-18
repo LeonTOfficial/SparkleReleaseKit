@@ -3,7 +3,7 @@ import Foundation
 import SparkleReleaseKitCore
 
 struct SparkleKitCLI {
-    static let version = "0.1.1"
+    static let version = "0.2.0"
 
     private let configurationStore = ConfigurationStore()
 
@@ -17,6 +17,7 @@ struct SparkleKitCLI {
         case "integrate": try integrate(rest)
         case "test": try test(rest)
         case "verify": try verify(rest)
+        case "verify-update": try verifyUpdate(rest)
         case "validate-feed": try validateFeed(rest)
         case "prepare-release": try prepareRelease(rest)
         case "version", "--version", "-v":
@@ -32,8 +33,14 @@ struct SparkleKitCLI {
     private func setup(_ arguments: [String]) throws {
         let options = try Options(
             arguments,
-            valueOptions: ["owner", "repo", "app-name", "bundle-id", "scheme", "feed-url", "public-key"],
-            booleanFlags: ["apply", "json"]
+            valueOptions: [
+                "owner", "repo", "app-name", "bundle-id", "scheme", "feed-url", "public-key",
+                "release-mode", "architectures", "team-id",
+            ],
+            booleanFlags: [
+                "apply", "json", "require-sparkle-signature", "require-developer-id",
+                "require-notarization", "allow-ad-hoc-signing",
+            ]
         )
         try options.rejectExtraPositionals(maximum: 1)
         let root = URL(fileURLWithPath: options.positionals.first ?? FileManager.default.currentDirectoryPath)
@@ -59,16 +66,29 @@ struct SparkleKitCLI {
         let bundleID = options.value("bundle-id") ?? detected.bundleIdentifier
         let scheme = options.value("scheme") ?? detected.scheme
         let publicKey = options.value("public-key") ?? ""
-        let feedURL = options.value("feed-url")
+        let feedURL =
+            options.value("feed-url")
             ?? "https://\(owner.lowercased()).github.io/\(repository)/appcast.xml"
         let container = relativePath(detected.containerURL, to: detected.rootURL)
         let infoPlist = detected.infoPlistURL.map { relativePath($0, to: detected.rootURL) }
+        let releaseMode = try parsedReleaseMode(options.value("release-mode")) ?? .free
+        let architectures = try parsedArchitectures(options.value("architectures")) ?? [.arm64, .x86_64]
+        let distribution = SparkleKitConfiguration.Distribution(
+            releaseMode: releaseMode,
+            requireSparkleSignature: true,
+            requireDeveloperID: options.flag("require-developer-id") ? true : nil,
+            requireNotarization: options.flag("require-notarization") ? true : nil,
+            allowAdHocSigning: options.flag("allow-ad-hoc-signing") ? true : nil,
+            expectedArchitectures: architectures,
+            expectedTeamIdentifier: options.value("team-id")
+        )
 
         let configuration = SparkleKitConfiguration(
             app: .init(name: appName, bundleIdentifier: bundleID, minimumMacOS: detected.minimumMacOS, style: detected.style),
             project: .init(container: container, scheme: scheme, infoPlist: infoPlist),
             github: .init(owner: owner, repository: repository),
-            updates: .init(feedURL: feedURL, publicEDKey: publicKey)
+            updates: .init(feedURL: feedURL, publicEDKey: publicKey),
+            distribution: distribution
         )
         let configURL = detected.rootURL.appendingPathComponent(ConfigurationStore.defaultFileName)
         try configurationStore.save(configuration, to: configURL)
@@ -88,10 +108,13 @@ struct SparkleKitCLI {
         detail("Target style", configuration.app.style.rawValue)
         detail("Xcode container", configuration.project.container)
         detail("Feed", configuration.updates.feedURL)
+        detail("Release mode", configuration.distribution.releaseMode.rawValue)
 
         if publicKey.isEmpty {
             warning("The public EdDSA key is still missing.")
-            print("\nRun Sparkle's official generate_keys tool once, then add only its printed public key to updates.publicEDKey in sparklekit.json.")
+            print(
+                "\nRun Sparkle's official generate_keys tool once, then add only its printed public key to updates.publicEDKey in sparklekit.json."
+            )
             print("After that, run: sparklekit integrate \(shellQuoted(detected.rootURL.path)) --apply")
         } else if integration != nil {
             success("Integration files were applied.")
@@ -166,18 +189,30 @@ struct SparkleKitCLI {
     }
 
     private func verify(_ arguments: [String]) throws {
-        let options = try Options(arguments, valueOptions: ["project"], booleanFlags: ["json"])
+        let options = try Options(
+            arguments,
+            valueOptions: ["project", "release-mode"],
+            booleanFlags: ["json", "require-developer-id", "require-notarization", "allow-ad-hoc-signing"]
+        )
         try options.rejectExtraPositionals(maximum: 1)
         guard let archivePath = options.positionals.first else { throw CLIError.missingArgument("archive path") }
         let root = URL(fileURLWithPath: options.value("project") ?? FileManager.default.currentDirectoryPath).standardizedFileURL
         let configurationURL = root.appendingPathComponent(ConfigurationStore.defaultFileName)
-        let configuration = FileManager.default.fileExists(atPath: configurationURL.path)
+        let configuration =
+            FileManager.default.fileExists(atPath: configurationURL.path)
             ? try configurationStore.load(from: configurationURL)
             : nil
+        let distribution =
+            configuration?.distribution
+            ?? .init(expectedArchitectures: [])
+        let policy = try ReleaseVerificationPolicy(
+            distribution: distribution,
+            overrides: try policyOverrides(from: options)
+        )
         let result = try ReleaseVerifier().inspect(
             archiveURL: URL(fileURLWithPath: archivePath),
             expectedBundleIdentifier: configuration?.app.bundleIdentifier,
-            notarizationRequired: configuration?.distribution.notarization == .required
+            policy: policy
         )
         let failures = result.diagnostics.filter { $0.severity == .failure }
         if options.flag("json") {
@@ -187,6 +222,51 @@ struct SparkleKitCLI {
             printDiagnostics(result.diagnostics)
         }
         if !failures.isEmpty { throw CLIError.diagnosticsFailed(failures.count, jsonWasPrinted: options.flag("json")) }
+    }
+
+    private func verifyUpdate(_ arguments: [String]) throws {
+        let options = try Options(
+            arguments,
+            valueOptions: ["appcast", "public-key", "version", "project"],
+            booleanFlags: ["json"]
+        )
+        try options.rejectExtraPositionals(maximum: 1)
+        guard let archivePath = options.positionals.first else { throw CLIError.missingArgument("archive path") }
+        guard let appcastPath = options.value("appcast") else { throw CLIError.missingArgument("--appcast") }
+        guard let version = options.value("version") else { throw CLIError.missingArgument("--version build number") }
+
+        let root = URL(fileURLWithPath: options.value("project") ?? FileManager.default.currentDirectoryPath)
+            .standardizedFileURL
+        let configurationURL = root.appendingPathComponent(ConfigurationStore.defaultFileName)
+        let configuration =
+            FileManager.default.fileExists(atPath: configurationURL.path)
+            ? try configurationStore.load(from: configurationURL)
+            : nil
+        guard let publicKey = options.value("public-key") ?? configuration?.updates.publicEDKey,
+            !publicKey.isEmpty
+        else {
+            throw CLIError.missingArgument("--public-key or updates.publicEDKey in sparklekit.json")
+        }
+
+        let appcast = try AppcastValidator().validate(fileURL: URL(fileURLWithPath: appcastPath))
+        let structuralFailures = appcast.diagnostics.filter { $0.severity == .failure }
+        guard structuralFailures.isEmpty else {
+            if options.flag("json") { try printJSON(appcast) }
+            throw CLIError.diagnosticsFailed(structuralFailures.count, jsonWasPrinted: options.flag("json"))
+        }
+        let diagnostic = try UpdateSignatureVerifier().verify(
+            archiveURL: URL(fileURLWithPath: archivePath),
+            appcast: appcast,
+            publicEDKey: publicKey,
+            expectedBuildVersion: version
+        )
+        let diagnostics = appcast.diagnostics + [diagnostic]
+        if options.flag("json") {
+            try printJSON(DiagnosticReport(command: "verify-update", success: true, diagnostics: diagnostics))
+        } else {
+            header("Verify Sparkle update signature")
+            printDiagnostics(diagnostics)
+        }
     }
 
     private func validateFeed(_ arguments: [String]) throws {
@@ -212,8 +292,12 @@ struct SparkleKitCLI {
             valueOptions: [
                 "version", "project", "notes", "generate-appcast", "key-account",
                 "download-url-prefix", "release-notes-url-prefix", "phased-rollout", "output",
+                "release-mode",
             ],
-            booleanFlags: ["replace", "json"]
+            booleanFlags: [
+                "replace", "json", "require-sparkle-signature", "require-developer-id",
+                "require-notarization", "allow-ad-hoc-signing",
+            ]
         )
         try options.rejectExtraPositionals(maximum: 1)
         guard let archivePath = options.positionals.first else { throw CLIError.missingArgument("archive path") }
@@ -233,7 +317,8 @@ struct SparkleKitCLI {
                 downloadURLPrefix: options.value("download-url-prefix"),
                 releaseNotesURLPrefix: options.value("release-notes-url-prefix"),
                 phasedRolloutInterval: try options.integer("phased-rollout"),
-                replaceExisting: options.flag("replace")
+                replaceExisting: options.flag("replace"),
+                policyOverrides: try policyOverrides(from: options)
             )
         )
         if options.flag("json") {
@@ -245,6 +330,8 @@ struct SparkleKitCLI {
             detail("Stage", result.outputDirectory.path)
             detail("Archive", result.archiveURL.lastPathComponent)
             detail("Appcast", result.appcastURL.lastPathComponent)
+            detail("SHA-256", result.checksumURL.lastPathComponent)
+            detail("Manifest", result.manifestURL.lastPathComponent)
             print("\nReview this staging directory before uploading any asset or publishing a release.")
         }
     }
@@ -274,24 +361,56 @@ struct SparkleKitCLI {
         return path.hasPrefix(rootPath) ? String(path.dropFirst(rootPath.count)) : path
     }
 
+    private func policyOverrides(from options: Options) throws -> ReleasePolicyOverrides {
+        .init(
+            releaseMode: try parsedReleaseMode(options.value("release-mode")),
+            requireSparkleSignature: options.flag("require-sparkle-signature"),
+            requireDeveloperID: options.flag("require-developer-id"),
+            requireNotarization: options.flag("require-notarization"),
+            allowAdHocSigning: options.flag("allow-ad-hoc-signing")
+        )
+    }
+
+    private func parsedReleaseMode(_ value: String?) throws -> ReleaseMode? {
+        guard let value else { return nil }
+        guard let mode = ReleaseMode(rawValue: value) else {
+            throw CLIError.invalidValue("release-mode", value)
+        }
+        return mode
+    }
+
+    private func parsedArchitectures(_ value: String?) throws -> [CPUArchitecture]? {
+        guard let value else { return nil }
+        let parts = value.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+        let architectures = parts.compactMap(CPUArchitecture.init(rawValue:))
+        guard !parts.isEmpty, architectures.count == parts.count,
+            Set(architectures).count == architectures.count
+        else {
+            throw CLIError.invalidValue("architectures", value)
+        }
+        return architectures.sorted()
+    }
+
     private func printChanges(_ changes: [IntegrationChange]) {
         for change in changes {
-            let marker = switch change.kind {
-            case .create: "+"
-            case .update: "~"
-            case .unchanged: "="
-            }
+            let marker =
+                switch change.kind {
+                case .create: "+"
+                case .update: "~"
+                case .unchanged: "="
+                }
             print("  \(marker) \(change.relativePath)  \(change.summary)")
         }
     }
 
     private func printDiagnostics(_ diagnostics: [Diagnostic]) {
         for diagnostic in diagnostics {
-            let marker = switch diagnostic.severity {
-            case .pass: "PASS"
-            case .warning: "WARN"
-            case .failure: "FAIL"
-            }
+            let marker =
+                switch diagnostic.severity {
+                case .pass: "PASS"
+                case .warning: "WARN"
+                case .failure: "FAIL"
+                }
             print("\n[\(marker)] \(diagnostic.title)")
             print("       \(diagnostic.detail)")
             if let remediation = diagnostic.remediation { print("       Fix: \(remediation)") }
@@ -329,60 +448,70 @@ struct SparkleKitCLI {
     }
 
     private func printHelp() {
-        print("""
-        SparkleReleaseKit \(Self.version)
-        Add secure Sparkle updates to a macOS app with GitHub Releases in minutes.
+        print(
+            """
+            SparkleReleaseKit \(Self.version)
+            Add secure Sparkle updates to a macOS app with GitHub Releases in minutes.
 
-        USAGE
-          sparklekit setup [project-path] [options]
-          sparklekit integrate [project-path] [--apply] [--json]
-          sparklekit doctor [project-path] [--json]
-          sparklekit test [project-path] [--json]
-          sparklekit verify <archive.zip|archive.dmg> [--project path] [--json]
-          sparklekit validate-feed <appcast.xml> [--json]
-          sparklekit prepare-release <archive> --version X.Y.Z [options]
+            USAGE
+              sparklekit setup [project-path] [options]
+              sparklekit integrate [project-path] [--apply] [--json]
+              sparklekit doctor [project-path] [--json]
+              sparklekit test [project-path] [--json]
+              sparklekit verify <archive.zip|archive.dmg> [--project path] [--json]
+              sparklekit verify-update <archive> --appcast PATH --version BUILD [options]
+              sparklekit validate-feed <appcast.xml> [--json]
+              sparklekit prepare-release <archive> --version X.Y.Z [options]
 
-        SETUP OPTIONS
-          --owner VALUE       GitHub account or organization
-          --repo VALUE        GitHub repository name
-          --app-name VALUE    User-facing application name
-          --bundle-id VALUE   Reverse-DNS bundle identifier
-          --scheme VALUE      Shared Xcode scheme
-          --feed-url VALUE    HTTPS URL to appcast.xml
-          --public-key VALUE  Sparkle EdDSA public key (never the private key)
-          --apply             Apply generated integration files immediately
-          --json              Emit stable, machine-readable JSON
+            SETUP OPTIONS
+              --owner VALUE       GitHub account or organization
+              --repo VALUE        GitHub repository name
+              --app-name VALUE    User-facing application name
+              --bundle-id VALUE   Reverse-DNS bundle identifier
+              --scheme VALUE      Shared Xcode scheme
+              --feed-url VALUE    HTTPS URL to appcast.xml
+              --public-key VALUE  Sparkle EdDSA public key (never the private key)
+              --release-mode MODE free, developer-id, or auto (default: free)
+              --architectures LIST Comma-separated arm64,x86_64 (default: universal)
+              --team-id VALUE      Optional expected 10-character Apple Team ID
+              --apply             Apply generated integration files immediately
+              --json              Emit stable, machine-readable JSON
 
-        PREPARE-RELEASE OPTIONS
-          --version VALUE             Version embedded in the app archive
-          --project PATH              Project containing sparklekit.json
-          --notes PATH                Markdown release notes
-          --generate-appcast PATH     Official Sparkle generate_appcast tool
-          --key-account VALUE         Keychain account (default: ed25519)
-          --download-url-prefix URL   HTTPS release-asset prefix
-          --release-notes-url-prefix URL
-          --phased-rollout SECONDS    Sparkle phased rollout interval
-          --output PATH               Release staging root
-          --replace                   Archive an existing stage and replace it
-          --json                      Emit stable, machine-readable JSON
+            PREPARE-RELEASE OPTIONS
+              --version VALUE             Version embedded in the app archive
+              --project PATH              Project containing sparklekit.json
+              --notes PATH                Markdown release notes
+              --generate-appcast PATH     Official Sparkle generate_appcast tool
+              --key-account VALUE         Keychain account (default: ed25519)
+              --download-url-prefix URL   HTTPS release-asset prefix
+              --release-notes-url-prefix URL
+              --phased-rollout SECONDS    Sparkle phased rollout interval
+              --output PATH               Release staging root
+              --replace                   Archive an existing stage and replace it
+              --release-mode MODE         free, developer-id, or auto
+              --require-sparkle-signature Require EdDSA update authentication
+              --require-developer-id      Fail without Developer ID Application signing
+              --require-notarization      Fail without Gatekeeper acceptance and a staple
+              --allow-ad-hoc-signing      Permit valid ad-hoc signatures in free/auto mode
+              --json                      Emit stable, machine-readable JSON
 
-        SAFE DEFAULTS
-          integrate only previews changes until --apply is supplied.
-          prepare-release reads the private EdDSA key from macOS Keychain and
-          never accepts private key material in sparklekit.json.
+            SAFE DEFAULTS
+              integrate only previews changes until --apply is supplied.
+              prepare-release reads the private EdDSA key from macOS Keychain and
+              never accepts private key material in sparklekit.json.
 
-        EXIT CODES
-          0  Success
-          1  Unexpected runtime or tool failure
-          2  One or more validation checks failed
-          64 Invalid command usage or missing input
-          65 Invalid configuration data
-          66 Target project was not found or could not be detected
-          78 Unsafe or incomplete integration state
+            EXIT CODES
+              0  Success
+              1  Unexpected runtime or tool failure
+              2  One or more validation checks failed
+              64 Invalid command usage or missing input
+              65 Invalid configuration data
+              66 Target project was not found or could not be detected
+              78 Unsafe or incomplete integration state
 
-        DOCUMENTATION
-          https://leontofficial.github.io/SparkleReleaseKit/
-        """)
+            DOCUMENTATION
+              https://leontofficial.github.io/SparkleReleaseKit/
+            """)
     }
 }
 
@@ -437,9 +566,10 @@ struct Options {
                     flags.insert(body)
                     index += 1
                 } else if valueOptions.contains(body),
-                          index + 1 < arguments.count,
-                          arguments[index + 1] != "--",
-                          !arguments[index + 1].hasPrefix("--") {
+                    index + 1 < arguments.count,
+                    arguments[index + 1] != "--",
+                    !arguments[index + 1].hasPrefix("--")
+                {
                     guard seen.insert(body).inserted else { throw CLIError.duplicateOption(body) }
                     values[body] = arguments[index + 1]
                     index += 2

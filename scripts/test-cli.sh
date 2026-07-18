@@ -25,11 +25,16 @@ expect_usage_error() {
   fi
 }
 
-"$CLI" version | grep -F "SparkleReleaseKit 0.1.1" >/dev/null
-"$CLI" help | grep -F "SAFE DEFAULTS" >/dev/null
+"$CLI" version | grep -F "SparkleReleaseKit 0.2.0" >/dev/null
+help_output="$($CLI help)"
+grep -F "SAFE DEFAULTS" <<<"$help_output" >/dev/null
+grep -F "verify-update" <<<"$help_output" >/dev/null
+grep -F "free, developer-id, or auto" <<<"$help_output" >/dev/null
 expect_usage_error "unknown option" doctor --jsno
 expect_usage_error "missing option value" setup --owner
 expect_usage_error "duplicate option" setup --owner example --owner duplicate
 expect_usage_error "extra positional" validate-feed one.xml two.xml
+expect_usage_error "invalid release mode" verify missing.zip --release-mode paid-only
+expect_usage_error "missing appcast" verify-update missing.zip --version 1
 
 echo "CLI contract checks passed."

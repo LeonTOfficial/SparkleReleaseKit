@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import SparkleReleaseKitCore
 
 @Suite("Configuration")
@@ -98,6 +99,72 @@ struct ConfigurationStoreTests {
     func rejectsWorkflowExpressions() {
         var configuration = fixtureConfiguration()
         configuration.project.scheme = "Example ${{ github.token }}"
+
+        #expect(throws: ConfigurationError.self) {
+            try ConfigurationStore().validate(configuration)
+        }
+    }
+
+    @Test("Migrates schema v1 notarization settings without requiring a paid certificate")
+    func migratesLegacyConfiguration() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let url = root.appendingPathComponent("sparklekit.json")
+        let publicKey = Data(repeating: 7, count: 32).base64EncodedString()
+        try """
+        {
+          "$schema": "\(SparkleKitConfiguration.schemaURL)",
+          "schemaVersion": 1,
+          "app": {"name":"Example App","bundleIdentifier":"com.example.app","minimumMacOS":"13.0","style":"swiftUI"},
+          "project": {"container":"Example App.xcodeproj","scheme":"Example App","configuration":"Release","infoPlist":"Example App/Info.plist"},
+          "github": {"owner":"example","repository":"example-app","pagesBranch":"gh-pages"},
+          "updates": {"sparkleVersion":"2.9.4","feedURL":"https://example.com/appcast.xml","publicEDKey":"\(publicKey)","automaticChecks":true,"automaticDownloads":false},
+          "distribution": {"installer":"dmg","updateArchive":"zip","notarization":"optional"}
+        }
+        """.write(to: url, atomically: true, encoding: .utf8)
+
+        let configuration = try ConfigurationStore().load(from: url)
+
+        #expect(configuration.schemaVersion == 2)
+        #expect(configuration.distribution.releaseMode == .free)
+        #expect(!configuration.distribution.requireDeveloperID)
+        #expect(!configuration.distribution.requireNotarization)
+        #expect(configuration.distribution.requireSparkleSignature)
+    }
+
+    @Test("Keeps free and Developer ID distribution policies distinct")
+    func validatesReleasePolicies() throws {
+        let free = try ReleaseVerificationPolicy(
+            distribution: .init(releaseMode: .free, expectedArchitectures: [.arm64])
+        )
+        #expect(free.requireSparkleSignature)
+        #expect(!free.requireDeveloperID)
+        #expect(!free.requireNotarization)
+        #expect(free.allowAdHocSigning)
+
+        let developerID = try ReleaseVerificationPolicy(
+            distribution: .init(releaseMode: .developerID, expectedArchitectures: [.arm64])
+        )
+        #expect(developerID.requireDeveloperID)
+        #expect(developerID.requireNotarization)
+        #expect(!developerID.allowAdHocSigning)
+
+        #expect(throws: ReleasePolicyError.self) {
+            try ReleaseVerificationPolicy(
+                distribution: .init(
+                    releaseMode: .free,
+                    requireDeveloperID: true,
+                    expectedArchitectures: [.arm64]
+                )
+            )
+        }
+    }
+
+    @Test("Rejects attempts to disable Sparkle update authentication")
+    func rejectsDisabledSparkleSignature() throws {
+        var configuration = fixtureConfiguration()
+        configuration.distribution.requireSparkleSignature = false
 
         #expect(throws: ConfigurationError.self) {
             try ConfigurationStore().validate(configuration)

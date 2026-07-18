@@ -1,7 +1,7 @@
 import Foundation
 
 public struct SparkleKitConfiguration: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
     public static let supportedSparkleVersion = "2.9.4"
     public static let schemaURL = "https://leontofficial.github.io/SparkleReleaseKit/schema/sparklekit.schema.json"
 
@@ -104,16 +104,80 @@ public struct SparkleKitConfiguration: Codable, Equatable, Sendable {
     public struct Distribution: Codable, Equatable, Sendable {
         public var installer: ArchiveFormat
         public var updateArchive: ArchiveFormat
-        public var notarization: NotarizationMode
+        public var releaseMode: ReleaseMode
+        public var requireSparkleSignature: Bool
+        public var requireDeveloperID: Bool
+        public var requireNotarization: Bool
+        public var allowAdHocSigning: Bool
+        public var expectedArchitectures: [CPUArchitecture]
+        public var expectedTeamIdentifier: String?
 
         public init(
             installer: ArchiveFormat = .dmg,
             updateArchive: ArchiveFormat = .zip,
-            notarization: NotarizationMode = .optional
+            releaseMode: ReleaseMode = .free,
+            requireSparkleSignature: Bool = true,
+            requireDeveloperID: Bool? = nil,
+            requireNotarization: Bool? = nil,
+            allowAdHocSigning: Bool? = nil,
+            expectedArchitectures: [CPUArchitecture] = [.arm64, .x86_64],
+            expectedTeamIdentifier: String? = nil
         ) {
             self.installer = installer
             self.updateArchive = updateArchive
-            self.notarization = notarization
+            self.releaseMode = releaseMode
+            self.requireSparkleSignature = requireSparkleSignature
+            self.requireDeveloperID = requireDeveloperID ?? (releaseMode == .developerID)
+            self.requireNotarization = requireNotarization ?? (releaseMode == .developerID)
+            self.allowAdHocSigning = allowAdHocSigning ?? (releaseMode != .developerID)
+            self.expectedArchitectures = expectedArchitectures
+            self.expectedTeamIdentifier = expectedTeamIdentifier
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case installer, updateArchive, releaseMode, requireSparkleSignature
+            case requireDeveloperID, requireNotarization, allowAdHocSigning
+            case expectedArchitectures, expectedTeamIdentifier
+            case notarization
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            installer = try container.decode(ArchiveFormat.self, forKey: .installer)
+            updateArchive = try container.decode(ArchiveFormat.self, forKey: .updateArchive)
+
+            if let explicitMode = try container.decodeIfPresent(ReleaseMode.self, forKey: .releaseMode) {
+                releaseMode = explicitMode
+            } else {
+                let legacy = try container.decodeIfPresent(NotarizationMode.self, forKey: .notarization) ?? .optional
+                releaseMode = legacy == .required ? .developerID : .free
+            }
+
+            requireSparkleSignature = try container.decodeIfPresent(Bool.self, forKey: .requireSparkleSignature) ?? true
+            requireDeveloperID =
+                try container.decodeIfPresent(Bool.self, forKey: .requireDeveloperID)
+                ?? (releaseMode == .developerID)
+            requireNotarization =
+                try container.decodeIfPresent(Bool.self, forKey: .requireNotarization)
+                ?? (releaseMode == .developerID)
+            allowAdHocSigning =
+                try container.decodeIfPresent(Bool.self, forKey: .allowAdHocSigning)
+                ?? (releaseMode != .developerID)
+            expectedArchitectures = try container.decodeIfPresent([CPUArchitecture].self, forKey: .expectedArchitectures) ?? []
+            expectedTeamIdentifier = try container.decodeIfPresent(String.self, forKey: .expectedTeamIdentifier)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(installer, forKey: .installer)
+            try container.encode(updateArchive, forKey: .updateArchive)
+            try container.encode(releaseMode, forKey: .releaseMode)
+            try container.encode(requireSparkleSignature, forKey: .requireSparkleSignature)
+            try container.encode(requireDeveloperID, forKey: .requireDeveloperID)
+            try container.encode(requireNotarization, forKey: .requireNotarization)
+            try container.encode(allowAdHocSigning, forKey: .allowAdHocSigning)
+            try container.encode(expectedArchitectures, forKey: .expectedArchitectures)
+            try container.encodeIfPresent(expectedTeamIdentifier, forKey: .expectedTeamIdentifier)
         }
     }
 }
@@ -129,10 +193,33 @@ public enum ArchiveFormat: String, Codable, CaseIterable, Sendable {
     case dmg
 }
 
+public enum ReleaseMode: String, Codable, CaseIterable, Sendable {
+    case free
+    case developerID = "developer-id"
+    case auto
+}
+
+public enum CPUArchitecture: String, Codable, CaseIterable, Comparable, Hashable, Sendable {
+    case arm64
+    case x86_64
+
+    public static func < (lhs: CPUArchitecture, rhs: CPUArchitecture) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
 public enum NotarizationMode: String, Codable, CaseIterable, Sendable {
     case required
     case optional
     case disabled
+}
+
+public enum CodeSigningKind: String, Codable, Sendable {
+    case unsigned
+    case adHoc = "ad-hoc"
+    case appleDevelopment = "apple-development"
+    case developerID = "developer-id"
+    case other
 }
 
 public struct DetectedProject: Equatable, Sendable {
@@ -236,13 +323,66 @@ public struct ReleaseMetadata: Codable, Equatable, Sendable {
     }
 }
 
+public struct ReleaseArtifactSummary: Codable, Equatable, Sendable {
+    public var archiveBytes: Int64
+    public var sha256: String
+    public var architectures: [CPUArchitecture]
+    public var signingKind: CodeSigningKind
+    public var teamIdentifier: String?
+    public var hardenedRuntime: Bool
+    public var gatekeeperAccepted: Bool
+    public var stapledTicket: Bool
+    public var requestedReleaseMode: ReleaseMode
+    public var effectiveReleaseMode: ReleaseMode
+
+    public init(
+        archiveBytes: Int64,
+        sha256: String,
+        architectures: [CPUArchitecture],
+        signingKind: CodeSigningKind,
+        teamIdentifier: String?,
+        hardenedRuntime: Bool,
+        gatekeeperAccepted: Bool,
+        stapledTicket: Bool,
+        requestedReleaseMode: ReleaseMode,
+        effectiveReleaseMode: ReleaseMode
+    ) {
+        self.archiveBytes = archiveBytes
+        self.sha256 = sha256
+        self.architectures = architectures
+        self.signingKind = signingKind
+        self.teamIdentifier = teamIdentifier
+        self.hardenedRuntime = hardenedRuntime
+        self.gatekeeperAccepted = gatekeeperAccepted
+        self.stapledTicket = stapledTicket
+        self.requestedReleaseMode = requestedReleaseMode
+        self.effectiveReleaseMode = effectiveReleaseMode
+    }
+}
+
 public struct ReleaseInspectionResult: Codable, Sendable {
     public var metadata: ReleaseMetadata?
+    public var artifact: ReleaseArtifactSummary?
     public var diagnostics: [Diagnostic]
 
-    public init(metadata: ReleaseMetadata?, diagnostics: [Diagnostic]) {
+    public init(metadata: ReleaseMetadata?, artifact: ReleaseArtifactSummary? = nil, diagnostics: [Diagnostic]) {
         self.metadata = metadata
+        self.artifact = artifact
         self.diagnostics = diagnostics
+    }
+}
+
+public struct AppcastEnclosure: Codable, Equatable, Sendable {
+    public var url: String
+    public var version: String
+    public var signature: String
+    public var length: Int64
+
+    public init(url: String, version: String, signature: String, length: Int64) {
+        self.url = url
+        self.version = version
+        self.signature = signature
+        self.length = length
     }
 }
 
@@ -250,13 +390,64 @@ public struct AppcastValidationResult: Codable, Sendable {
     public var source: String
     public var itemCount: Int
     public var versions: [String]
+    public var enclosures: [AppcastEnclosure]
     public var diagnostics: [Diagnostic]
 
-    public init(source: String, itemCount: Int, versions: [String], diagnostics: [Diagnostic]) {
+    public init(
+        source: String,
+        itemCount: Int,
+        versions: [String],
+        enclosures: [AppcastEnclosure] = [],
+        diagnostics: [Diagnostic]
+    ) {
         self.source = source
         self.itemCount = itemCount
         self.versions = versions
+        self.enclosures = enclosures
         self.diagnostics = diagnostics
+    }
+}
+
+public struct ReleaseManifest: Codable, Equatable, Sendable {
+    public var schemaVersion: Int
+    public var releaseMode: ReleaseMode
+    public var appName: String
+    public var bundleIdentifier: String
+    public var shortVersion: String
+    public var buildVersion: String
+    public var archive: String
+    public var archiveBytes: Int64
+    public var sha256: String
+    public var architectures: [CPUArchitecture]
+    public var signingKind: CodeSigningKind
+    public var developerIDVerified: Bool
+    public var notarizationVerified: Bool
+    public var sparkleSignatureVerified: Bool
+    public var appcast: String
+
+    public init(
+        releaseMode: ReleaseMode,
+        metadata: ReleaseMetadata,
+        archive: String,
+        artifact: ReleaseArtifactSummary,
+        sparkleSignatureVerified: Bool,
+        appcast: String
+    ) {
+        schemaVersion = 1
+        self.releaseMode = releaseMode
+        appName = metadata.appName
+        bundleIdentifier = metadata.bundleIdentifier
+        shortVersion = metadata.shortVersion
+        buildVersion = metadata.buildVersion
+        self.archive = archive
+        archiveBytes = artifact.archiveBytes
+        sha256 = artifact.sha256
+        architectures = artifact.architectures
+        signingKind = artifact.signingKind
+        developerIDVerified = artifact.signingKind == .developerID
+        notarizationVerified = artifact.gatekeeperAccepted && artifact.stapledTicket
+        self.sparkleSignatureVerified = sparkleSignatureVerified
+        self.appcast = appcast
     }
 }
 
@@ -265,6 +456,8 @@ public struct ReleasePreparationResult: Codable, Sendable {
     public var outputDirectory: URL
     public var archiveURL: URL
     public var appcastURL: URL
+    public var checksumURL: URL
+    public var manifestURL: URL
     public var metadata: ReleaseMetadata
     public var diagnostics: [Diagnostic]
 
@@ -273,6 +466,8 @@ public struct ReleasePreparationResult: Codable, Sendable {
         outputDirectory: URL,
         archiveURL: URL,
         appcastURL: URL,
+        checksumURL: URL,
+        manifestURL: URL,
         metadata: ReleaseMetadata,
         diagnostics: [Diagnostic]
     ) {
@@ -280,6 +475,8 @@ public struct ReleasePreparationResult: Codable, Sendable {
         self.outputDirectory = outputDirectory
         self.archiveURL = archiveURL
         self.appcastURL = appcastURL
+        self.checksumURL = checksumURL
+        self.manifestURL = manifestURL
         self.metadata = metadata
         self.diagnostics = diagnostics
     }
