@@ -101,7 +101,33 @@ public struct Doctor: Sendable {
                 remediation: "Run: sparklekit integrate --apply"
             ))
         }
-        diagnostics.append(trackedSecretDiagnostic(for: scanTrackedSecrets(root)))
+        do {
+            try validateNoTrackedSecrets(root)
+            diagnostics.append(.init(.pass, "Tracked secret scan", "No private-key headers or common token formats were found in tracked files."))
+        } catch let issue as TrackedSecretScanIssue {
+            switch issue {
+            case .notGitWorktree:
+                diagnostics.append(.init(.warning, "Tracked secret scan", "The project is not a readable Git worktree; tracked-file checks were skipped."))
+            case .suspiciousFilename:
+                diagnostics.append(.init(
+                    .failure,
+                    "Tracked secret filenames",
+                    "Potential private material is tracked in one or more files. Paths are intentionally omitted from diagnostic output.",
+                    remediation: "Remove private material from Git history, rotate exposed credentials, and use Keychain or protected CI secrets."
+                ))
+            case .suspiciousContents:
+                diagnostics.append(.init(
+                    .failure,
+                    "Tracked secret contents",
+                    "Potential credential material appears in one or more tracked files. Paths and matched content are intentionally omitted from diagnostic output.",
+                    remediation: "Treat the credential as exposed, rotate it, and remove it from repository history."
+                ))
+            case .contentScanFailed:
+                diagnostics.append(.init(.warning, "Tracked secret contents", "The tracked-file content scan could not complete. Command output is intentionally omitted."))
+            }
+        } catch {
+            diagnostics.append(.init(.warning, "Tracked secret scan", "The tracked-file scan stopped unexpectedly without exposing command output."))
+        }
         return diagnostics
     }
 
@@ -163,18 +189,17 @@ public struct Doctor: Sendable {
         return result
     }
 
-    private enum TrackedSecretScanResult {
-        case skippedNotGit
+    private enum TrackedSecretScanIssue: Error {
+        case notGitWorktree
         case suspiciousFilename
         case suspiciousContents
         case contentScanFailed
-        case clean
     }
 
-    private func scanTrackedSecrets(_ root: URL) -> TrackedSecretScanResult {
+    private func validateNoTrackedSecrets(_ root: URL) throws {
         guard let files = try? ProcessRunner().run("/usr/bin/git", arguments: ["ls-files"], directory: root),
               files.status == 0 else {
-            return .skippedNotGit
+            throw TrackedSecretScanIssue.notGitWorktree
         }
         let hasSuspiciousName = files.standardOutput.split(separator: "\n").contains { path in
             let lower = path.lowercased()
@@ -186,7 +211,7 @@ public struct Doctor: Sendable {
                 || lower.contains("secret_key")
                 || lower.contains("secret-key")
         }
-        if hasSuspiciousName { return .suspiciousFilename }
+        if hasSuspiciousName { throw TrackedSecretScanIssue.suspiciousFilename }
 
         let content = try? ProcessRunner().run(
             "/usr/bin/git",
@@ -194,36 +219,10 @@ public struct Doctor: Sendable {
             directory: root
         )
         if let content, content.status == 0, !content.standardOutput.isEmpty {
-            return .suspiciousContents
+            throw TrackedSecretScanIssue.suspiciousContents
         }
         if content == nil || content?.status ?? 0 > 1 {
-            return .contentScanFailed
-        }
-        return .clean
-    }
-
-    private func trackedSecretDiagnostic(for result: TrackedSecretScanResult) -> Diagnostic {
-        switch result {
-        case .skippedNotGit:
-            return .init(.warning, "Tracked secret scan", "The project is not a readable Git worktree; tracked-file checks were skipped.")
-        case .suspiciousFilename:
-            return .init(
-                .failure,
-                "Tracked secret filenames",
-                "Potential private material is tracked in one or more files. Paths are intentionally omitted from diagnostic output.",
-                remediation: "Remove private material from Git history, rotate exposed credentials, and use Keychain or protected CI secrets."
-            )
-        case .suspiciousContents:
-            return .init(
-                .failure,
-                "Tracked secret contents",
-                "Potential credential material appears in one or more tracked files. Paths and matched content are intentionally omitted from diagnostic output.",
-                remediation: "Treat the credential as exposed, rotate it, and remove it from repository history."
-            )
-        case .contentScanFailed:
-            return .init(.warning, "Tracked secret contents", "The tracked-file content scan could not complete. Command output is intentionally omitted.")
-        case .clean:
-            return .init(.pass, "Tracked secret scan", "No private-key headers or common token formats were found in tracked files.")
+            throw TrackedSecretScanIssue.contentScanFailed
         }
     }
 }
