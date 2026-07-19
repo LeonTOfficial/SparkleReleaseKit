@@ -2,6 +2,10 @@
 
 This repository is an integration toolkit for secure macOS software updates. Treat update signing as a security boundary.
 
+## Start here
+
+For a new chat or coding-agent session, read `AI/PROJECT_HANDOFF.md` first. It records the current repository state, project boundaries, verification commands, and the next planned milestone. Then follow the required workflow below.
+
 ## Required workflow
 
 1. Read `README.md`, `AI/AI_INTEGRATION.md`, and `docs/SECURITY_MODEL.md`.
