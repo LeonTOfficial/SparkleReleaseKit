@@ -17,7 +17,7 @@ Copy this template into the final integration report.
 | --- | --- | --- | --- |
 | Baseline | Project-specific | | |
 | SparkleKit doctor | `sparklekit doctor ... --json` | | |
-| SparkleKit test | `sparklekit test ... --json` | | |
+| SparkleKit test | `sparklekit test ... --allow-project-execution --json` | | |
 | Tests | Project-specific | | |
 | Release build | `xcodebuild ... -configuration Release` | | |
 | Archive | Project-specific | | |

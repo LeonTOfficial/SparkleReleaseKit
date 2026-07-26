@@ -1,7 +1,7 @@
 import Foundation
 
 public struct SparkleKitConfiguration: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
     public static let supportedSparkleVersion = "2.9.4"
     public static let schemaURL = "https://leontofficial.github.io/SparkleReleaseKit/schema/sparklekit.schema.json"
 
@@ -41,26 +41,63 @@ public struct SparkleKitConfiguration: Codable, Equatable, Sendable {
         public var bundleIdentifier: String
         public var minimumMacOS: String
         public var style: AppStyle
+        public var sandboxed: Bool?
 
-        public init(name: String, bundleIdentifier: String, minimumMacOS: String = "13.0", style: AppStyle) {
+        public init(
+            name: String,
+            bundleIdentifier: String,
+            minimumMacOS: String = "13.0",
+            style: AppStyle,
+            sandboxed: Bool? = nil
+        ) {
             self.name = name
             self.bundleIdentifier = bundleIdentifier
             self.minimumMacOS = minimumMacOS
             self.style = style
+            self.sandboxed = sandboxed
         }
     }
 
     public struct Project: Codable, Equatable, Sendable {
         public var container: String
+        public var target: String?
         public var scheme: String
         public var configuration: String
         public var infoPlist: String?
+        public var template: IntegrationTemplate
+        public var generateWorkflow: Bool
 
-        public init(container: String, scheme: String, configuration: String = "Release", infoPlist: String? = nil) {
+        public init(
+            container: String,
+            target: String? = nil,
+            scheme: String,
+            configuration: String = "Release",
+            infoPlist: String? = nil,
+            template: IntegrationTemplate = .auto,
+            generateWorkflow: Bool = true
+        ) {
             self.container = container
+            self.target = target
             self.scheme = scheme
             self.configuration = configuration
             self.infoPlist = infoPlist
+            self.template = template
+            self.generateWorkflow = generateWorkflow
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case container, target, scheme, configuration, infoPlist, template, generateWorkflow
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.container = try container.decode(String.self, forKey: .container)
+            target = try container.decodeIfPresent(String.self, forKey: .target)
+            scheme = try container.decode(String.self, forKey: .scheme)
+            configuration = try container.decode(String.self, forKey: .configuration)
+            infoPlist = try container.decodeIfPresent(String.self, forKey: .infoPlist)
+            template = try container.decodeIfPresent(IntegrationTemplate.self, forKey: .template) ?? .auto
+            generateWorkflow = try container.decodeIfPresent(Bool.self, forKey: .generateWorkflow) ?? true
         }
     }
 
@@ -188,6 +225,13 @@ public enum AppStyle: String, Codable, CaseIterable, Sendable {
     case unknown
 }
 
+public enum IntegrationTemplate: String, Codable, CaseIterable, Sendable {
+    case auto
+    case minimal
+    case swiftUI = "swiftui"
+    case appKit = "appkit"
+}
+
 public enum ArchiveFormat: String, Codable, CaseIterable, Sendable {
     case zip
     case dmg
@@ -229,8 +273,10 @@ public struct DetectedProject: Equatable, Sendable {
     public var bundleIdentifier: String
     public var minimumMacOS: String
     public var scheme: String
+    public var targetName: String
     public var infoPlistURL: URL?
     public var style: AppStyle
+    public var sandboxed: Bool?
     public var githubOwner: String?
     public var githubRepository: String?
 
@@ -241,8 +287,10 @@ public struct DetectedProject: Equatable, Sendable {
         bundleIdentifier: String,
         minimumMacOS: String,
         scheme: String,
+        targetName: String,
         infoPlistURL: URL?,
         style: AppStyle,
+        sandboxed: Bool?,
         githubOwner: String?,
         githubRepository: String?
     ) {
@@ -252,8 +300,10 @@ public struct DetectedProject: Equatable, Sendable {
         self.bundleIdentifier = bundleIdentifier
         self.minimumMacOS = minimumMacOS
         self.scheme = scheme
+        self.targetName = targetName
         self.infoPlistURL = infoPlistURL
         self.style = style
+        self.sandboxed = sandboxed
         self.githubOwner = githubOwner
         self.githubRepository = githubRepository
     }
@@ -266,16 +316,36 @@ public enum DiagnosticSeverity: String, Codable, Sendable {
 }
 
 public struct Diagnostic: Codable, Equatable, Sendable {
+    public var id: String
     public var severity: DiagnosticSeverity
     public var title: String
     public var detail: String
     public var remediation: String?
+    public var affectedComponent: String?
+    public var evidence: String?
+    public var automaticFixAvailable: Bool
+    public var documentationURL: String?
 
-    public init(_ severity: DiagnosticSeverity, _ title: String, _ detail: String, remediation: String? = nil) {
+    public init(
+        _ severity: DiagnosticSeverity,
+        _ title: String,
+        _ detail: String,
+        remediation: String? = nil,
+        id: String? = nil,
+        affectedComponent: String? = nil,
+        evidence: String? = nil,
+        automaticFixAvailable: Bool = false,
+        documentationURL: String? = nil
+    ) {
+        self.id = id ?? DiagnosticCatalog.identifier(for: title)
         self.severity = severity
         self.title = title
         self.detail = detail
         self.remediation = remediation
+        self.affectedComponent = affectedComponent
+        self.evidence = evidence
+        self.automaticFixAvailable = automaticFixAvailable
+        self.documentationURL = documentationURL
     }
 }
 
@@ -423,6 +493,7 @@ public struct ReleaseManifest: Codable, Equatable, Sendable {
     public var developerIDVerified: Bool
     public var notarizationVerified: Bool
     public var sparkleSignatureVerified: Bool
+    public var unsignedOverrideUsed: Bool?
     public var appcast: String
 
     public init(
@@ -431,9 +502,10 @@ public struct ReleaseManifest: Codable, Equatable, Sendable {
         archive: String,
         artifact: ReleaseArtifactSummary,
         sparkleSignatureVerified: Bool,
+        unsignedOverrideUsed: Bool = false,
         appcast: String
     ) {
-        schemaVersion = 1
+        schemaVersion = 2
         self.releaseMode = releaseMode
         appName = metadata.appName
         bundleIdentifier = metadata.bundleIdentifier
@@ -447,6 +519,7 @@ public struct ReleaseManifest: Codable, Equatable, Sendable {
         developerIDVerified = artifact.signingKind == .developerID
         notarizationVerified = artifact.gatekeeperAccepted && artifact.stapledTicket
         self.sparkleSignatureVerified = sparkleSignatureVerified
+        self.unsignedOverrideUsed = unsignedOverrideUsed
         self.appcast = appcast
     }
 }

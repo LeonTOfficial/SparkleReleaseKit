@@ -8,7 +8,7 @@
   "required": ["$schema", "schemaVersion", "app", "project", "github", "updates", "distribution"],
   "properties": {
     "$schema": { "const": "https://leontofficial.github.io/SparkleReleaseKit/schema/sparklekit.schema.json" },
-    "schemaVersion": { "const": 2 },
+    "schemaVersion": { "const": 3 },
     "app": {
       "type": "object",
       "additionalProperties": false,
@@ -17,7 +17,14 @@
         "name": { "type": "string", "minLength": 1, "maxLength": 120 },
         "bundleIdentifier": { "type": "string", "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$" },
         "minimumMacOS": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+){1,2}$" },
-        "style": { "enum": ["appKit", "swiftUI", "unknown"] }
+        "style": { "enum": ["appKit", "swiftUI", "unknown"] },
+        "sandboxed": {
+          "anyOf": [
+            { "type": "boolean" },
+            { "type": "null" }
+          ],
+          "description": "Passively detected App Sandbox state, or null when detection was inconclusive."
+        }
       }
     },
     "project": {
@@ -33,8 +40,16 @@
             { "not": { "pattern": "(^|/)\\.\\.?(/|$)|//|\\\\|\\$\\{\\{" } }
           ]
         },
+        "target": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "string", "minLength": 1, "maxLength": 255, "not": { "pattern": "\\$\\{\\{" } }
+          ]
+        },
         "scheme": { "type": "string", "minLength": 1, "maxLength": 255, "not": { "pattern": "\\$\\{\\{" } },
         "configuration": { "type": "string", "minLength": 1, "maxLength": 255, "not": { "pattern": "\\$\\{\\{" } },
+        "template": { "enum": ["auto", "minimal", "swiftui", "appkit"] },
+        "generateWorkflow": { "type": "boolean" },
         "infoPlist": {
           "anyOf": [
             { "type": "null" },

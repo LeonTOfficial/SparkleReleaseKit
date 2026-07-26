@@ -84,6 +84,24 @@ struct AppcastValidatorTests {
         }
     }
 
+    @Test("Rejects a UTF-16 document type declaration")
+    func rejectsUTF16Doctype() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SparkleFeed-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let feed = root.appendingPathComponent("appcast.xml")
+        let xml = """
+        <?xml version="1.0" encoding="UTF-16"?>
+        <!DOCTYPE rss [<!ENTITY external SYSTEM "file:///etc/passwd">]>
+        <rss version="2.0"><channel><title>&external;</title></channel></rss>
+        """
+        try #require(xml.data(using: .utf16LittleEndian)).write(to: feed)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        #expect(throws: AppcastValidationError.self) {
+            try AppcastValidator().validate(fileURL: feed)
+        }
+    }
+
     @Test("Rejects ambiguous items with multiple enclosures")
     func rejectsMultipleEnclosures() throws {
         let signature = Data(repeating: 0x41, count: 64).base64EncodedString()

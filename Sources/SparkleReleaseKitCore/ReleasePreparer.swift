@@ -8,6 +8,7 @@ public enum ReleasePreparationError: LocalizedError {
     case outputExists(URL)
     case missingGenerateAppcast
     case invalidGenerateAppcast(URL)
+    case projectGenerateAppcastRequiresPermission(URL)
     case generateAppcastFailed(String)
     case generatedAppcastMissing(URL)
     case archiveVerificationFailed(Int)
@@ -31,6 +32,8 @@ public enum ReleasePreparationError: LocalizedError {
             "Sparkle's official generate_appcast tool was not found. Pass --generate-appcast /path/to/Sparkle/bin/generate_appcast."
         case .invalidGenerateAppcast(let url):
             "Refusing to execute \(url.path). The selected executable must be named generate_appcast."
+        case .projectGenerateAppcastRequiresPermission(let url):
+            "Refusing to execute \(url.path) from the target project without --allow-project-execution."
         case .generateAppcastFailed(let detail):
             "Sparkle's generate_appcast tool failed: \(detail)"
         case .generatedAppcastMissing(let url):
@@ -58,6 +61,7 @@ public struct ReleasePreparationOptions: Sendable {
     public var releaseNotesURLPrefix: String?
     public var phasedRolloutInterval: Int?
     public var replaceExisting: Bool
+    public var allowProjectExecution: Bool
     public var policyOverrides: ReleasePolicyOverrides
 
     public init(
@@ -71,6 +75,7 @@ public struct ReleasePreparationOptions: Sendable {
         releaseNotesURLPrefix: String? = nil,
         phasedRolloutInterval: Int? = nil,
         replaceExisting: Bool = false,
+        allowProjectExecution: Bool = false,
         policyOverrides: ReleasePolicyOverrides = .init()
     ) {
         self.version = version
@@ -83,6 +88,7 @@ public struct ReleasePreparationOptions: Sendable {
         self.releaseNotesURLPrefix = releaseNotesURLPrefix
         self.phasedRolloutInterval = phasedRolloutInterval
         self.replaceExisting = replaceExisting
+        self.allowProjectExecution = allowProjectExecution
         self.policyOverrides = policyOverrides
     }
 }
@@ -116,15 +122,17 @@ public struct ReleasePreparer: Sendable {
         let releaseNotesURLPrefix = try options.releaseNotesURLPrefix.map(validatedHTTPSPrefix)
 
         let root = projectRoot.standardizedFileURL.resolvingSymlinksInPath()
-        let outputRoot =
-            try options.outputRootURL?.standardizedFileURL
-            ?? ProjectPathResolver.resolve(".sparklekit/releases", under: root)
+        let outputRoot = try validatedOutputRoot(options.outputRootURL, projectRoot: root)
         let finalDirectory = outputRoot.appendingPathComponent("v\(options.version)").standardizedFileURL
         if fileManager.fileExists(atPath: finalDirectory.path), !options.replaceExisting {
             throw ReleasePreparationError.outputExists(finalDirectory)
         }
 
-        let tool = try resolveGenerateAppcast(options.generateAppcastURL)
+        let tool = try resolveGenerateAppcast(
+            options.generateAppcastURL,
+            projectRoot: root,
+            allowProjectExecution: options.allowProjectExecution
+        )
         let transactionRoot = outputRoot.appendingPathComponent(".preparing-\(UUID().uuidString)")
         try fileManager.createDirectory(at: transactionRoot, withIntermediateDirectories: true)
         var shouldRemoveTransaction = true
@@ -137,7 +145,8 @@ public struct ReleasePreparer: Sendable {
         let inspection = try ReleaseVerifier().inspect(
             archiveURL: stagedArchive,
             expectedBundleIdentifier: configuration.app.bundleIdentifier,
-            policy: policy
+            policy: policy,
+            rejectUnsigned: !policy.allowUnsigned
         )
         let failures = inspection.diagnostics.filter { $0.severity == .failure }
         guard failures.isEmpty else {
@@ -153,7 +162,15 @@ public struct ReleasePreparer: Sendable {
         let notesName = stagedArchive.deletingPathExtension().lastPathComponent + ".md"
         let stagedNotes = transactionRoot.appendingPathComponent(notesName)
         if let releaseNotes = options.releaseNotesURL {
-            try fileManager.copyItem(at: releaseNotes.standardizedFileURL, to: stagedNotes)
+            guard let notes = BoundedFileReader.data(
+                at: releaseNotes.standardizedFileURL,
+                maximumBytes: 10 * 1_024 * 1_024
+            ) else {
+                throw ReleasePreparationError.generateAppcastFailed(
+                    "Release notes must be a regular, non-symlink file no larger than 10 MiB."
+                )
+            }
+            try notes.write(to: stagedNotes, options: .atomic)
         } else {
             let notes = "# \(configuration.app.name) \(options.version)\n\nSee the GitHub release for full details.\n"
             try Data(notes.utf8).write(to: stagedNotes, options: .atomic)
@@ -175,10 +192,26 @@ public struct ReleasePreparer: Sendable {
         }
         arguments.append(transactionRoot.path)
 
-        let generation = try ProcessRunner().run(tool.path, arguments: arguments, directory: root)
-        guard generation.status == 0 else {
+        let generation = try ProcessRunner().run(
+            tool.path,
+            arguments: arguments,
+            directory: root,
+            environment: helperEnvironment(),
+            inheritEnvironment: false,
+            timeout: 300
+        )
+        guard generation.status == 0,
+              !generation.timedOut,
+              !generation.standardOutputTruncated,
+              !generation.standardErrorTruncated else {
             let detail = generation.standardError.isEmpty ? generation.standardOutput : generation.standardError
-            throw ReleasePreparationError.generateAppcastFailed(detail)
+            let reason =
+                generation.timedOut
+                ? "The generator exceeded the 300-second timeout."
+                : generation.standardOutputTruncated || generation.standardErrorTruncated
+                    ? "The generator output exceeded the 8 MiB capture limit."
+                    : detail
+            throw ReleasePreparationError.generateAppcastFailed(reason)
         }
 
         let appcast = transactionRoot.appendingPathComponent("appcast.xml")
@@ -219,6 +252,7 @@ public struct ReleasePreparer: Sendable {
             archive: stagedArchive.lastPathComponent,
             artifact: artifact,
             sparkleSignatureVerified: true,
+            unsignedOverrideUsed: policy.allowUnsigned && artifact.signingKind == .unsigned,
             appcast: appcast.lastPathComponent
         )
         let manifestURL = transactionRoot.appendingPathComponent("release-manifest.json")
@@ -296,25 +330,53 @@ public struct ReleasePreparer: Sendable {
         }
     }
 
-    private func resolveGenerateAppcast(_ explicit: URL?) throws -> URL {
-        var candidates: [URL] = []
-        if let explicit {
-            candidates.append(
-                explicit.pathExtension.isEmpty
-                    ? explicit.appendingPathComponent("generate_appcast")
-                    : explicit)
-            candidates.append(explicit)
+    private func helperEnvironment() -> [String: String] {
+        let inherited = ProcessInfo.processInfo.environment
+        var environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
+        for key in ["HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME"] {
+            if let value = inherited[key], !value.isEmpty {
+                environment[key] = value
+            }
         }
-        if let environmentPath = ProcessInfo.processInfo.environment["SPARKLE_GENERATE_APPCAST"], !environmentPath.isEmpty {
-            candidates.append(URL(fileURLWithPath: environmentPath))
-        }
+        return environment
+    }
+
+    private func resolveGenerateAppcast(
+        _ explicit: URL?,
+        projectRoot: URL,
+        allowProjectExecution: Bool
+    ) throws -> URL {
+        guard let explicit else { throw ReleasePreparationError.missingGenerateAppcast }
+        let candidates = [
+            explicit.pathExtension.isEmpty
+                ? explicit.appendingPathComponent("generate_appcast")
+                : explicit,
+            explicit,
+        ]
         for candidate in candidates.map({ $0.standardizedFileURL.resolvingSymlinksInPath() })
         where fileManager.isExecutableFile(atPath: candidate.path) {
             guard candidate.lastPathComponent == "generate_appcast" else {
                 throw ReleasePreparationError.invalidGenerateAppcast(candidate)
             }
+            if ProjectPathResolver.contains(candidate, in: projectRoot), !allowProjectExecution {
+                throw ReleasePreparationError.projectGenerateAppcastRequiresPermission(candidate)
+            }
             return candidate
         }
         throw ReleasePreparationError.missingGenerateAppcast
+    }
+
+    private func validatedOutputRoot(_ explicit: URL?, projectRoot: URL) throws -> URL {
+        guard let explicit else {
+            return try ProjectPathResolver.resolve(".sparklekit/releases", under: projectRoot)
+        }
+        let resolved = explicit.standardizedFileURL.resolvingSymlinksInPath()
+        if fileManager.fileExists(atPath: resolved.path) {
+            let values = try resolved.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isDirectory == true, values.isSymbolicLink != true else {
+                throw ReleasePreparationError.outputExists(resolved)
+            }
+        }
+        return resolved
     }
 }

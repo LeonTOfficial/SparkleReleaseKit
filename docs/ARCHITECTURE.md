@@ -1,20 +1,23 @@
 # Architecture
 
-SparkleReleaseKit has three boundaries:
+SparkleReleaseKit has four boundaries:
 
 1. `SparkleReleaseKitCore` performs Xcode-backed detection, strict configuration validation, planning, transactional file changes, Release builds, archive inspection, appcast validation, and release staging.
-2. `sparklekit` presents deterministic text and JSON commands for people, CI, and coding agents.
-3. Generated project files connect the target app to official Sparkle and a reusable release-readiness workflow.
+2. `SparkleReleaseKitCLISupport` owns injectable terminal input, guided decisions, sanitization, and TTY/plain progress reporting without depending on the executable entry point.
+3. `sparklekit` presents guided human commands and deterministic JSON commands for CI and coding agents.
+4. Generated project files connect the target app to official Sparkle and a reusable release-readiness workflow.
 
 ## Safety model
 
-Integration is plan-first. A dry run computes every managed path without writing. Apply mode backs up existing managed files, writes atomically, patches a real Info.plist through `PropertyListSerialization`, and restores its own touched files if an operation fails.
+Integration is plan-first. A dry run computes every managed path without writing. Apply mode takes stable snapshots, acquires a project lock, revalidates concurrent state, backs up existing managed files, writes atomically, patches a real Info.plist through `PropertyListSerialization`, and restores its own touched files if an operation fails.
+
+Interactive quickstart and machine automation share the same detector, configuration, plan, and integrator. The terminal layer changes presentation only. JSON mode bypasses prompts and progress so standard output remains one versioned document.
 
 The toolkit deliberately does not rewrite arbitrary `project.pbxproj` files. Xcode has no stable public command-line API for adding a package product to every historical project format, and blind text manipulation is unsafe. The generated integration guide makes this one explicit Xcode action instead.
 
 ## Configuration
 
-`sparklekit.json` is the source of truth for public integration metadata. Schema v2 models free, Developer ID, and auto release policies explicitly and migrates schema v1 in memory. It intentionally has no private-key field. The runtime rejects unknown fields rather than letting `Codable` silently ignore them, and a non-empty public key must decode to exactly 32 Ed25519 bytes.
+`sparklekit.json` is the source of truth for public integration metadata. Schema v3 models free, Developer ID, and auto release policies plus explicit update channels, and safely migrates schema v1 and v2 in memory. It intentionally has no private-key field. The runtime rejects unknown fields rather than letting `Codable` silently ignore them, and a non-empty public key must decode to exactly 32 Ed25519 bytes.
 
 ## Release boundary
 

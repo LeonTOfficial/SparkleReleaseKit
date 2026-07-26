@@ -27,7 +27,7 @@ Neither one makes the app Apple-notarized. macOS may show a first-launch Gatekee
 Create this policy directly during setup:
 
 ```bash
-sparklekit setup "/path/to/MyApp" \
+sparklekit quickstart "/path/to/MyApp" \
   --release-mode free \
   --architectures arm64,x86_64
 ```

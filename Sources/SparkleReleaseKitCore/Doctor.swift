@@ -38,7 +38,7 @@ public struct Doctor: Sendable {
             root: root,
             remediation: "Update project.container in sparklekit.json."
         ))
-        let projectText = xcodeProjectText(in: root)
+        let projectText = xcodeProjectText(in: root, configuration: configuration)
         if projectText.contains("github.com/sparkle-project/Sparkle") && projectText.contains("productName = Sparkle") {
             diagnostics.append(.init(.pass, "Official Sparkle package", "The Xcode project references the official Sparkle package and product."))
         } else {
@@ -46,22 +46,42 @@ public struct Doctor: Sendable {
                 .failure,
                 "Official Sparkle package",
                 "The official Sparkle Swift package is not linked to the project yet.",
-                remediation: "Follow SparkleReleaseKit/INTEGRATION.md and add https://github.com/sparkle-project/Sparkle to the app target."
+                remediation: "Follow SparkleReleaseKit/INTEGRATION.md and add https://github.com/sparkle-project/Sparkle to the app target.",
+                id: "SRK1001",
+                affectedComponent: configuration.project.target ?? configuration.app.name,
+                evidence: configuration.project.container
             ))
+        }
+
+        if detectsCustomSparkleIntegration(in: root) {
+            diagnostics.append(
+                .init(
+                    .warning,
+                    "Existing custom Sparkle integration",
+                    "Updater code already exists in the project. SparkleReleaseKit will preserve it and will not silently replace custom behavior.",
+                    remediation: "Review the existing updater, delegate, channels, and UI before applying generated files.",
+                    id: "SRK1103",
+                    affectedComponent: configuration.project.target ?? configuration.app.name,
+                    documentationURL: DiagnosticCatalog.definition(for: "SRK1103")?.documentationURL
+                ))
         }
 
         diagnostics.append(safeFileDiagnostic(
             "Updater source",
             relativePath: "SparkleReleaseKit/AppUpdater.swift",
             root: root,
-            remediation: "Run: sparklekit integrate --apply"
+            remediation: "Run: sparklekit doctor --fix --apply",
+            automaticFixAvailable: true
         ))
-        diagnostics.append(safeFileDiagnostic(
-            "Release workflow",
-            relativePath: ".github/workflows/sparkle-release.yml",
-            root: root,
-            remediation: "Run: sparklekit integrate --apply"
-        ))
+        if configuration.project.generateWorkflow {
+            diagnostics.append(safeFileDiagnostic(
+                "Release workflow",
+                relativePath: ".github/workflows/sparkle-release.yml",
+                root: root,
+                remediation: "Run: sparklekit doctor --fix --apply",
+                automaticFixAvailable: true
+            ))
+        }
 
         if let relativePlist = configuration.project.infoPlist {
             do {
@@ -98,7 +118,8 @@ public struct Doctor: Sendable {
                 .warning,
                 "Secret protection",
                 ".gitignore does not yet exclude .sparklekit/private/.",
-                remediation: "Run: sparklekit integrate --apply"
+                remediation: "Run: sparklekit doctor --fix --apply",
+                automaticFixAvailable: true
             ))
         }
         do {
@@ -147,7 +168,15 @@ public struct Doctor: Sendable {
             if dictionary[key] as? String == value {
                 results.append(.init(.pass, key, "The expected value is present in Info.plist."))
             } else {
-                results.append(.init(.failure, key, "The expected value is missing or different.", remediation: "Run: sparklekit integrate --apply"))
+                results.append(
+                    .init(
+                        .failure,
+                        key,
+                        "The expected value is missing or different.",
+                        remediation: "Run: sparklekit doctor --fix --apply",
+                        affectedComponent: url.path,
+                        automaticFixAvailable: true
+                    ))
             }
         }
         return results
@@ -159,34 +188,93 @@ public struct Doctor: Sendable {
             : .init(.failure, title, "Not found at \(path).", remediation: "Install the latest stable Xcode command-line tools.")
     }
 
-    private func safeFileDiagnostic(_ title: String, relativePath: String, root: URL, remediation: String) -> Diagnostic {
+    private func safeFileDiagnostic(
+        _ title: String,
+        relativePath: String,
+        root: URL,
+        remediation: String,
+        automaticFixAvailable: Bool = false
+    ) -> Diagnostic {
         do {
-            let url = try ProjectPathResolver.resolve(relativePath, under: root)
+            let url = try ProjectPathResolver.resolveForWrite(relativePath, under: root)
             return FileManager.default.fileExists(atPath: url.path)
                 ? .init(.pass, title, "Found \(url.path).")
-                : .init(.failure, title, "Missing \(url.path).", remediation: remediation)
+                : .init(
+                    .failure,
+                    title,
+                    "Missing \(url.path).",
+                    remediation: remediation,
+                    affectedComponent: relativePath,
+                    automaticFixAvailable: automaticFixAvailable
+                )
         } catch {
             return .init(.failure, title, error.localizedDescription, remediation: remediation)
         }
     }
 
-    private func xcodeProjectText(in root: URL) -> String {
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
+    private func xcodeProjectText(
+        in root: URL,
+        configuration: SparkleKitConfiguration
+    ) -> String {
+        guard let container = try? ProjectPathResolver.resolve(
+            configuration.project.container,
+            under: root
         ) else { return "" }
-        var result = ""
-        for case let url as URL in enumerator where url.lastPathComponent == "project.pbxproj" {
-            guard ProjectPathResolver.contains(url, in: root) else { continue }
-            if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-               let size = attributes[.size] as? NSNumber,
-               size.int64Value <= 32 * 1_024 * 1_024,
-               let text = BoundedFileReader.string(at: url, maximumBytes: 32 * 1_024 * 1_024) {
-                result += text
+        let projects: [URL]
+        if container.pathExtension == "xcodeproj" {
+            projects = [container]
+        } else {
+            let workspace = container.appendingPathComponent("contents.xcworkspacedata")
+            guard let text = BoundedFileReader.string(at: workspace, maximumBytes: 1_024 * 1_024),
+                  let expression = try? NSRegularExpression(
+                    pattern: #"location\s*=\s*"group:([^"]+\.xcodeproj)""#
+                  ) else { return "" }
+            projects = expression.matches(
+                in: text,
+                range: NSRange(text.startIndex..., in: text)
+            ).prefix(16).compactMap { match in
+                guard let range = Range(match.range(at: 1), in: text) else { return nil }
+                return try? ProjectPathResolver.resolve(
+                    String(text[range]),
+                    under: root
+                )
             }
         }
-        return result
+        return projects.prefix(16).compactMap {
+            BoundedFileReader.string(
+                at: $0.appendingPathComponent("project.pbxproj"),
+                maximumBytes: 32 * 1_024 * 1_024
+            )
+        }.joined(separator: "\n")
+    }
+
+    private func detectsCustomSparkleIntegration(in root: URL) -> Bool {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return false }
+        var files = 0
+        var bytes = 0
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            files += 1
+            guard files <= 10_000 else { return false }
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
+                  let size = values.fileSize,
+                  size <= 8 * 1_024 * 1_024,
+                  bytes <= 64 * 1_024 * 1_024 - size,
+                  let text = BoundedFileReader.string(at: url, maximumBytes: 8 * 1_024 * 1_024)
+            else { continue }
+            bytes += size
+            if !text.contains("Generated by SparkleReleaseKit")
+                && (text.contains("SPUStandardUpdaterController")
+                || text.contains("SPUUpdaterDelegate")
+                || text.contains("SUUpdater"))
+            {
+                return true
+            }
+        }
+        return false
     }
 
     private enum TrackedSecretScanIssue: Error {
@@ -198,7 +286,10 @@ public struct Doctor: Sendable {
 
     private func validateNoTrackedSecrets(_ root: URL) throws {
         guard let files = try? ProcessRunner().run("/usr/bin/git", arguments: ["ls-files"], directory: root),
-              files.status == 0 else {
+              files.status == 0,
+              !files.timedOut,
+              !files.standardOutputTruncated,
+              !files.standardErrorTruncated else {
             throw TrackedSecretScanIssue.notGitWorktree
         }
         let hasSuspiciousName = files.standardOutput.split(separator: "\n").contains { path in
@@ -221,7 +312,12 @@ public struct Doctor: Sendable {
         if let content, content.status == 0, !content.standardOutput.isEmpty {
             throw TrackedSecretScanIssue.suspiciousContents
         }
-        if content == nil || content?.status ?? 0 > 1 {
+        if content == nil
+            || content?.status ?? 0 > 1
+            || content?.timedOut == true
+            || content?.standardOutputTruncated == true
+            || content?.standardErrorTruncated == true
+        {
             throw TrackedSecretScanIssue.contentScanFailed
         }
     }

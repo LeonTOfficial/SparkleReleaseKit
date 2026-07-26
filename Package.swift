@@ -14,13 +14,17 @@ let package = Package(
             name: "SparkleReleaseKitCore",
             resources: [.copy("Resources")]
         ),
+        .target(
+            name: "SparkleReleaseKitCLISupport",
+            dependencies: ["SparkleReleaseKitCore"]
+        ),
         .executableTarget(
             name: "SparkleReleaseKitCLI",
-            dependencies: ["SparkleReleaseKitCore"]
+            dependencies: ["SparkleReleaseKitCore", "SparkleReleaseKitCLISupport"]
         ),
         .testTarget(
             name: "SparkleReleaseKitCoreTests",
-            dependencies: ["SparkleReleaseKitCore"]
+            dependencies: ["SparkleReleaseKitCore", "SparkleReleaseKitCLISupport"]
         ),
     ],
     swiftLanguageModes: [.v6]

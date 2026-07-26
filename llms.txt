@@ -16,13 +16,13 @@ Primary documentation:
 Agent workflow:
 1. Inspect the target macOS project.
 2. Select `free`, `developer-id`, or `auto`; default to free when no paid Apple membership exists.
-3. Run `sparklekit setup <project-path> --release-mode <mode>`.
+3. Run `sparklekit quickstart <project-path> --non-interactive --release-mode <mode>` with explicit metadata flags.
 4. Add only the public EdDSA key to sparklekit.json.
 5. Preview with `sparklekit integrate <project-path>`.
 6. Apply with `sparklekit integrate <project-path> --apply`.
 7. Follow the generated SparkleReleaseKit/INTEGRATION.md.
 8. Run `sparklekit doctor`, build in Release, and verify a real archive using the selected mode.
-9. Use `sparklekit test --json`, `sparklekit validate-feed --json`, and `sparklekit verify-update` for deterministic completion evidence.
+9. After explicit target-project execution approval, use `sparklekit test --allow-project-execution --json`, `sparklekit validate-feed --json`, and `sparklekit verify-update` for deterministic completion evidence.
 10. Prepare release staging with `sparklekit prepare-release`; private signing keys remain in Keychain or protected CI secrets.
 
 Never expose or commit private update-signing keys, Apple certificates, App Store Connect keys, passwords, or tokens.

@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Show toolchain
         run: |
@@ -47,8 +49,10 @@ jobs:
           for script in sparklekit scripts/bootstrap.sh scripts/install.sh scripts/run-tests.sh; do zsh -n "$script"; done
           for script in scripts/check-site.sh scripts/test-cli.sh; do bash -n "$script"; done
           python3 -m py_compile scripts/check_site.py
+          python3 scripts/test_check_site.py
           python3 -m json.tool examples/sparklekit.example.json > /dev/null
           python3 -m json.tool schemas/sparklekit.schema.json > /dev/null
+          python3 -m json.tool schemas/sparklekit-cli-output.schema.json > /dev/null
           scripts/check-site.sh
 
       - name: Scan tracked files for secret material
@@ -106,6 +110,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - name: Parse package manifest
         run: swift package dump-package > /dev/null
 
@@ -117,4 +123,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0

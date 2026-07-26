@@ -21,7 +21,7 @@ Produce a buildable, secure Sparkle 2 integration while preserving the target re
 2. Inspect all `.xcodeproj`, `.xcworkspace`, shared schemes, app lifecycle files, Info.plists, entitlements, and existing update code.
 3. Build or test the unchanged target once to establish a baseline.
 4. Ask which release path the owner wants. Default to `free` when no paid Apple membership is available; never equate this choice with disabling Sparkle EdDSA.
-5. Run `sparklekit setup <target-path> --release-mode <mode>` with explicit flags when non-interactive.
+5. Run `sparklekit quickstart <target-path> --non-interactive --release-mode <mode>` with explicit metadata flags.
 6. Review `sparklekit.json`. Correct detection mistakes before continuing.
 7. Run `sparklekit integrate <target-path>` without `--apply`.
 8. Confirm every proposed path belongs to the intended target repository.
@@ -31,7 +31,7 @@ Produce a buildable, secure Sparkle 2 integration while preserving the target re
 12. Keep `AppUpdater.shared` alive from application startup.
 13. Add or connect a **Check for Updates...** command.
 14. Run `sparklekit doctor <target-path> --json` and resolve every `failure` result.
-15. Run `sparklekit test <target-path> --json`.
+15. After explicit approval to execute target-project build scripts and package plug-ins, run `sparklekit test <target-path> --allow-project-execution --json`. Add `--allow-network` only with separate approval for automatic Xcode package resolution. Project execution itself remains a broad trust decision, not a network sandbox.
 16. Build an ad-hoc signed artifact for free mode, or a Developer-ID signed and notarized artifact for Developer ID mode. Run `sparklekit verify --json` with the same mode.
 17. Run `sparklekit prepare-release` with the official `generate_appcast` executable. Do not provide private key material to the agent.
 18. Run `sparklekit validate-feed <appcast.xml> --json` and `sparklekit verify-update`.
@@ -41,7 +41,8 @@ Produce a buildable, secure Sparkle 2 integration while preserving the target re
 ## Non-interactive example
 
 ```bash
-sparklekit setup "/workspace/MyApp" \
+sparklekit quickstart "/workspace/MyApp" \
+  --non-interactive \
   --owner ExampleDeveloper \
   --repo MyApp \
   --app-name "My App" \
@@ -53,10 +54,12 @@ sparklekit setup "/workspace/MyApp" \
 sparklekit integrate "/workspace/MyApp"
 sparklekit integrate "/workspace/MyApp" --apply
 sparklekit doctor "/workspace/MyApp" --json
-sparklekit test "/workspace/MyApp" --json
+sparklekit test "/workspace/MyApp" --allow-project-execution --json
 ```
 
 `SPARKLE_PUBLIC_KEY` must contain only the public key. Never request, echo, log, read, or transmit the private key. Sparkle EdDSA release signing is required in every mode; instruct the human to prepare that private key in macOS Keychain and run the explicitly reviewed command themselves. Developer ID credentials are optional and must not be requested in free mode.
+
+Interactive prompts, terminal progress, and human-readable text must never be parsed by an agent. Use `--non-interactive --json`; standard output then contains exactly one JSON envelope. Project execution and network access remain separate approvals.
 
 ## Trust-layer rule
 

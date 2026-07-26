@@ -4,6 +4,7 @@ import Foundation
 public enum UpdateSignatureVerificationError: LocalizedError, Equatable {
     case invalidPublicKey
     case archiveMissing(URL)
+    case archiveUnsafe(URL)
     case archiveTooLarge(Int64)
     case noMatchingEnclosure(String)
     case ambiguousEnclosure(String)
@@ -18,6 +19,8 @@ public enum UpdateSignatureVerificationError: LocalizedError, Equatable {
             "The Sparkle public key must be a 32-byte base64 Ed25519 key."
         case .archiveMissing(let url):
             "The update archive does not exist at \(url.path)."
+        case .archiveUnsafe(let url):
+            "The update archive must be a readable, regular, non-symlink file: \(url.path)."
         case .archiveTooLarge(let bytes):
             "The update archive is too large for safe signature verification (\(bytes) bytes)."
         case .noMatchingEnclosure(let name):
@@ -57,11 +60,18 @@ public struct UpdateSignatureVerifier: Sendable {
         guard FileManager.default.fileExists(atPath: archive.path) else {
             throw UpdateSignatureVerificationError.archiveMissing(archive)
         }
-        let attributes = try FileManager.default.attributesOfItem(atPath: archive.path)
-        let archiveBytes = (attributes[.size] as? NSNumber)?.int64Value ?? -1
-        guard archiveBytes >= 0, archiveBytes <= Self.maximumArchiveBytes else {
-            throw UpdateSignatureVerificationError.archiveTooLarge(archiveBytes)
+        guard let archiveData = BoundedFileReader.data(
+            at: archive,
+            maximumBytes: Int(Self.maximumArchiveBytes)
+        ) else {
+            let attributes = try? FileManager.default.attributesOfItem(atPath: archive.path)
+            let bytes = (attributes?[.size] as? NSNumber)?.int64Value ?? -1
+            if bytes > Self.maximumArchiveBytes {
+                throw UpdateSignatureVerificationError.archiveTooLarge(bytes)
+            }
+            throw UpdateSignatureVerificationError.archiveUnsafe(archive)
         }
+        let archiveBytes = Int64(archiveData.count)
 
         let matches = appcast.enclosures.filter {
             URL(string: $0.url)?.lastPathComponent == archive.lastPathComponent
@@ -85,7 +95,6 @@ public struct UpdateSignatureVerifier: Sendable {
             throw UpdateSignatureVerificationError.invalidSignatureEncoding
         }
 
-        let archiveData = try Data(contentsOf: archive, options: [.mappedIfSafe, .uncached])
         guard publicKey.isValidSignature(signature, for: archiveData) else {
             throw UpdateSignatureVerificationError.invalidSignature
         }

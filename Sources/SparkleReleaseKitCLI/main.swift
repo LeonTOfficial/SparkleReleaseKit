@@ -7,7 +7,11 @@ do {
 } catch {
     let mapped = error as? SparkleKitExitCodeError
     if mapped?.suppressTextOutput != true {
-        FileHandle.standardError.write(Data("\nError: \(error.localizedDescription)\n".utf8))
+        let message = TerminalSanitizer.indented(
+            error.localizedDescription,
+            prefix: "Error: "
+        )
+        FileHandle.standardError.write(Data("\n\(message)\n".utf8))
     }
     let code: Int32
     if let mapped {

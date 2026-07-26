@@ -53,6 +53,25 @@ struct UpdateSignatureVerifierTests {
         }
     }
 
+    @Test("Rejects an archive supplied through a symbolic link")
+    func rejectsSymlinkArchive() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let link = fixture.root.appendingPathComponent("Linked.zip")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: fixture.archive)
+        var appcast = fixture.appcast
+        appcast.enclosures[0].url = "https://example.com/releases/Linked.zip"
+
+        #expect(throws: UpdateSignatureVerificationError.self) {
+            try UpdateSignatureVerifier().verify(
+                archiveURL: link,
+                appcast: appcast,
+                publicEDKey: fixture.publicKey,
+                expectedBuildVersion: "120"
+            )
+        }
+    }
+
     @Test("Rejects build-version and length mismatches")
     func rejectsMetadataMismatch() throws {
         let fixture = try makeFixture()

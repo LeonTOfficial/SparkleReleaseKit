@@ -27,15 +27,9 @@ public struct ConfigurationStore: Sendable {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ConfigurationError.missing(url)
         }
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-        guard values.isRegularFile == true,
-            values.isSymbolicLink != true,
-            let size = values.fileSize,
-            size <= Self.maximumConfigurationBytes
-        else {
+        guard let data = BoundedFileReader.data(at: url, maximumBytes: Self.maximumConfigurationBytes) else {
             throw ConfigurationError.invalid("sparklekit.json must be a regular, non-symlink file no larger than 1 MiB")
         }
-        let data = try Data(contentsOf: url)
         try validateRawDocument(data)
         var configuration = try JSONDecoder().decode(SparkleKitConfiguration.self, from: data)
         guard (1...SparkleKitConfiguration.currentSchemaVersion).contains(configuration.schemaVersion) else {
@@ -47,23 +41,30 @@ public struct ConfigurationStore: Sendable {
     }
 
     public func save(_ configuration: SparkleKitConfiguration, to url: URL) throws {
-        var normalized = configuration
-        normalized.schema = SparkleKitConfiguration.schemaURL
-        normalized.schemaVersion = SparkleKitConfiguration.currentSchemaVersion
-        try validate(normalized, allowMissingPublicKey: true)
+        let data = try encodedData(configuration, allowMissingPublicKey: true)
         if FileManager.default.fileExists(atPath: url.path),
             try url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == true
         {
             throw ConfigurationError.invalid("refusing to replace a symbolic-link configuration file")
         }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(normalized)
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
         try data.write(to: url, options: .atomic)
+    }
+
+    public func encodedData(
+        _ configuration: SparkleKitConfiguration,
+        allowMissingPublicKey: Bool = false
+    ) throws -> Data {
+        var normalized = configuration
+        normalized.schema = SparkleKitConfiguration.schemaURL
+        normalized.schemaVersion = SparkleKitConfiguration.currentSchemaVersion
+        try validate(normalized, allowMissingPublicKey: allowMissingPublicKey)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(normalized)
     }
 
     public func validate(_ configuration: SparkleKitConfiguration, allowMissingPublicKey: Bool = false) throws {
@@ -119,6 +120,15 @@ public struct ConfigurationStore: Sendable {
         else {
             throw ConfigurationError.invalid("project.scheme and project.configuration are required")
         }
+        if let target = configuration.project.target {
+            guard !target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                target.utf8.count <= 255,
+                !containsControlCharacter(target),
+                !containsGitHubExpression(target)
+            else {
+                throw ConfigurationError.invalid("project.target must be a printable target name")
+            }
+        }
         if let infoPlist = configuration.project.infoPlist, !isSafeRelativePath(infoPlist) {
             throw ConfigurationError.invalid("project.infoPlist must stay inside the project root")
         }
@@ -158,8 +168,19 @@ public struct ConfigurationStore: Sendable {
             throw ConfigurationError.invalid("the root value must be an object")
         }
         try requireOnly(root, keys: ["$schema", "schemaVersion", "app", "project", "github", "updates", "distribution"], path: "root")
-        try requireObject(root["app"], keys: ["name", "bundleIdentifier", "minimumMacOS", "style"], path: "app")
-        try requireObject(root["project"], keys: ["container", "scheme", "configuration", "infoPlist"], path: "project")
+        try requireObject(
+            root["app"],
+            keys: ["name", "bundleIdentifier", "minimumMacOS", "style", "sandboxed"],
+            path: "app"
+        )
+        try requireObject(
+            root["project"],
+            keys: [
+                "container", "target", "scheme", "configuration", "infoPlist",
+                "template", "generateWorkflow",
+            ],
+            path: "project"
+        )
         try requireObject(root["github"], keys: ["owner", "repository", "pagesBranch"], path: "github")
         try requireObject(
             root["updates"], keys: ["sparkleVersion", "feedURL", "publicEDKey", "automaticChecks", "automaticDownloads", "channel"],
@@ -172,6 +193,26 @@ public struct ConfigurationStore: Sendable {
             try requireObject(
                 root["distribution"],
                 keys: ["installer", "updateArchive", "notarization"],
+                path: "distribution"
+            )
+        case 2:
+            try requireObject(
+                root["project"],
+                keys: ["container", "scheme", "configuration", "infoPlist"],
+                path: "project"
+            )
+            try requireObject(
+                root["app"],
+                keys: ["name", "bundleIdentifier", "minimumMacOS", "style"],
+                path: "app"
+            )
+            try requireObject(
+                root["distribution"],
+                keys: [
+                    "installer", "updateArchive", "releaseMode", "requireSparkleSignature",
+                    "requireDeveloperID", "requireNotarization", "allowAdHocSigning",
+                    "expectedArchitectures", "expectedTeamIdentifier",
+                ],
                 path: "distribution"
             )
         case SparkleKitConfiguration.currentSchemaVersion:

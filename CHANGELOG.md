@@ -2,6 +2,30 @@
 
 All notable changes to SparkleReleaseKit are documented here. The project follows Semantic Versioning.
 
+## [0.3.0] - 2026-07-26
+
+### Added
+
+- Beginner-friendly `quickstart` wizard with automatic TTY detection, grouped project review, numbered ambiguity resolution, Use/Edit/Cancel decisions, and same-session preview and apply.
+- Reusable progress reporting with elapsed time, pass/warn/fail/skipped states, TTY spinners, plain-log heartbeats, `NO_COLOR` support, and bounded sanitized errors.
+- Stable `SRK` diagnostic identifiers, `sparklekit explain`, deterministic repair previews through `doctor --fix`, and transactional `doctor --fix --apply`.
+- Versioned CLI JSON envelopes and a published output schema for coding agents and CI.
+- Read-only `publish preview` planning for release assets, permissions, and intended remote writes.
+
+### Changed
+
+- `doctor`, `test`, `verify`, `prepare-release`, and `publish preview` now expose visible progress in human mode while JSON output remains exactly one document.
+- Target-project execution and automatic Xcode package resolution are separate explicit permissions; passive inspection remains the default.
+- Project detection, path resolution, process timeouts, output bounds, configuration migration, and generated integration guidance now produce more deterministic diagnostics.
+- Release verification now inspects immutable archive snapshots, nested signatures, Hardened Runtime, Library Validation, architecture, notarization policy, and deliberate unsigned-release exceptions more precisely.
+- GitHub workflows validate manifests and CLI contracts more thoroughly and retain immutable action references.
+
+### Security
+
+- Integration writes revalidate snapshots, enforce managed-file ownership, serialize concurrent applies, create backups, and roll back touched files after a failed transaction.
+- Terminal and diagnostic rendering neutralize control and bidirectional characters and truncate untrusted output.
+- Publication previews perform no network request or remote write, and private signing keys remain outside configuration, prompts, logs, and JSON.
+
 ## [0.2.0] - 2026-07-18
 
 ### Added

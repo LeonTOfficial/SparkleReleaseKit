@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://leontofficial.github.io/SparkleReleaseKit/schema/sparklekit-cli-output.schema.json",
+  "title": "SparkleReleaseKit CLI output envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "toolVersion",
+    "command",
+    "success",
+    "diagnostics",
+    "changes",
+    "artifacts",
+    "metadata"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "toolVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "command": { "type": "string", "minLength": 1 },
+    "success": { "type": "boolean" },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "severity",
+          "title",
+          "detail",
+          "automaticFixAvailable"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^SRK[0-9]{4}$" },
+          "severity": { "enum": ["pass", "warning", "failure"] },
+          "title": { "type": "string" },
+          "detail": { "type": "string" },
+          "remediation": { "type": "string" },
+          "affectedComponent": { "type": "string" },
+          "evidence": { "type": "string" },
+          "automaticFixAvailable": { "type": "boolean" },
+          "documentationURL": { "type": "string", "format": "uri" }
+        }
+      }
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "relativePath", "summary"],
+        "properties": {
+          "kind": { "enum": ["create", "update", "unchanged"] },
+          "relativePath": { "type": "string" },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "path"],
+        "properties": {
+          "type": { "type": "string" },
+          "path": { "type": "string" }
+        }
+      }
+    },
+    "metadata": {}
+  }
+}

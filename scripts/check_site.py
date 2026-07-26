@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sys
+from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -13,6 +15,11 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "website"
 PLACEHOLDER = re.compile(r"\{\{[A-Z0-9_]+\}\}")
+BIDI_CONTROLS = {
+    *range(0x200B, 0x2010),
+    *range(0x202A, 0x202F),
+    *range(0x2066, 0x206A),
+}
 
 
 class PageParser(HTMLParser):
@@ -39,26 +46,67 @@ class PageParser(HTMLParser):
                 self.targets.append((name, target))
 
 
-def local_target(page: Path, raw_target: str) -> Path | None:
+def terminal_text(value: str) -> str:
+    result: list[str] = []
+    for character in value:
+        scalar = ord(character)
+        if 0x20 <= scalar <= 0x7E or (
+            scalar >= 0xA0 and scalar not in BIDI_CONTROLS
+        ):
+            result.append(character)
+        else:
+            result.append(f"\\u{{{scalar:X}}}")
+    return "".join(result)
+
+
+def checked_local_path(candidate: Path, site: Path) -> Path:
+    site_lexical = site.absolute()
+    lexical = Path(os.path.abspath(candidate))
+    try:
+        relative = lexical.relative_to(site_lexical)
+    except ValueError:
+        raise ValueError("Local target escapes website root") from None
+
+    current = site_lexical
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            raise ValueError(
+                f"Local target uses forbidden symbolic link: {current.name}"
+            )
+
+    resolved = lexical.resolve(strict=False)
+    try:
+        resolved.relative_to(site.resolve())
+    except ValueError:
+        raise ValueError("Local target resolves outside website root") from None
+    return resolved
+
+
+def local_target(page: Path, raw_target: str, site: Path = SITE) -> Path | None:
     split = urlsplit(raw_target)
     if split.scheme or split.netloc or raw_target.startswith("mailto:"):
         return None
     decoded = unquote(split.path)
     if not decoded:
         return None
-    candidate = SITE / decoded.lstrip("/") if decoded.startswith("/") else page.parent / decoded
-    candidate = candidate.resolve(strict=False)
-    try:
-        candidate.relative_to(SITE.resolve())
-    except ValueError:
-        raise ValueError(f"Local target escapes website root: {raw_target}") from None
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in decoded):
+        raise ValueError("Local target contains a control character")
+    candidate = site / decoded.lstrip("/") if decoded.startswith("/") else page.parent / decoded
+    candidate = checked_local_path(candidate, site)
     if candidate.is_dir():
-        candidate /= "index.html"
+        candidate = checked_local_path(candidate / "index.html", site)
     return candidate
 
 
 def main() -> int:
     errors: list[str] = []
+    for candidate in sorted(SITE.rglob("*")):
+        if candidate.is_symlink():
+            errors.append(
+                f"{candidate.relative_to(ROOT)}: symbolic links are not allowed in the website"
+            )
+
     pages = sorted(SITE.rglob("*.html"))
     parsed_pages: dict[Path, PageParser] = {}
     if not pages:
@@ -66,6 +114,11 @@ def main() -> int:
 
     for page in pages:
         relative = page.relative_to(ROOT)
+        try:
+            checked_local_path(page, SITE)
+        except ValueError as error:
+            errors.append(f"{relative}: {error}")
+            continue
         source = page.read_text(encoding="utf-8")
         if PLACEHOLDER.search(source):
             errors.append(f"{relative}: unrendered template placeholder")
@@ -86,7 +139,9 @@ def main() -> int:
         if not parser.has_main:
             errors.append(f"{relative}: missing main landmark")
 
-        duplicates = sorted({value for value in parser.ids if parser.ids.count(value) > 1})
+        duplicates = sorted(
+            value for value, count in Counter(parser.ids).items() if count > 1
+        )
         for duplicate in duplicates:
             errors.append(f"{relative}: duplicate id '{duplicate}'")
 
@@ -119,7 +174,7 @@ def main() -> int:
     if errors:
         print("Website validation failed:", file=sys.stderr)
         for error in errors:
-            print(f"- {error}", file=sys.stderr)
+            print(f"- {terminal_text(error)}", file=sys.stderr)
         return 1
 
     print(f"Website validation passed for {len(pages)} HTML pages.")

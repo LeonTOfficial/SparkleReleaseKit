@@ -10,6 +10,8 @@ struct ReleaseWorkflowTests {
     func preparesRelease() throws {
         let fixture = try makeSignedArchive()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
+        setenv("SRK_TEST_AMBIENT_SECRET", "must-not-reach-helper", 1)
+        defer { unsetenv("SRK_TEST_AMBIENT_SECRET") }
         let signingKey = Curve25519.Signing.PrivateKey()
         let tool = try makeFakeGenerateAppcast(
             in: fixture.root,
@@ -26,7 +28,8 @@ struct ReleaseWorkflowTests {
             options: .init(
                 version: "1.2.0",
                 archiveURL: fixture.archive,
-                generateAppcastURL: tool
+                generateAppcastURL: tool,
+                allowProjectExecution: true
             )
         )
 
@@ -45,6 +48,57 @@ struct ReleaseWorkflowTests {
         #expect(manifest.sha256 == stagedDigest)
         let checksum = try String(contentsOf: result.checksumURL, encoding: .utf8)
         #expect(checksum == "\(manifest.sha256)  \(result.archiveURL.lastPathComponent)\n")
+    }
+
+    @Test("Publication preview binds manifest, archive, and checksum", .timeLimit(.minutes(1)))
+    func previewsPreparedPublication() throws {
+        let fixture = try makeSignedArchive()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let signingKey = Curve25519.Signing.PrivateKey()
+        let tool = try makeFakeGenerateAppcast(
+            in: fixture.root,
+            archive: fixture.archive,
+            signingKey: signingKey
+        )
+        let configuration = fixtureConfiguration(
+            publicKey: signingKey.publicKey.rawRepresentation.base64EncodedString()
+        )
+        let prepared = try ReleasePreparer().prepare(
+            projectRoot: fixture.root,
+            configuration: configuration,
+            options: .init(
+                version: "1.2.0",
+                archiveURL: fixture.archive,
+                generateAppcastURL: tool,
+                allowProjectExecution: true
+            )
+        )
+
+        let preview = try PublicationPreviewer().preview(
+            stageURL: prepared.outputDirectory,
+            configuration: configuration
+        )
+        #expect(preview.repository == "example/example-app")
+        #expect(preview.tag == "v1.2.0")
+        #expect(preview.assets.contains { $0.name == prepared.archiveURL.lastPathComponent })
+        #expect(!preview.diagnostics.contains { $0.severity == .failure })
+        #expect(preview.diagnostics.contains { $0.id == "SRK5102" })
+
+        try "0  \(prepared.archiveURL.lastPathComponent)\n".write(
+            to: prepared.checksumURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        let tampered = try PublicationPreviewer().preview(
+            stageURL: prepared.outputDirectory,
+            configuration: configuration
+        )
+        #expect(
+            tampered.diagnostics.contains {
+                $0.id == "SRK5103"
+                    && $0.severity == .failure
+                    && $0.affectedComponent == prepared.checksumURL.lastPathComponent
+            })
     }
 
     @Test("Refuses a release version that differs from the app bundle")
@@ -255,7 +309,108 @@ struct ReleaseWorkflowTests {
             })
     }
 
-    private func makeSignedArchive() throws -> (root: URL, archive: URL) {
+    @Test("Detects ad-hoc signing with Hardened Runtime and Library Validation")
+    func detectsLibraryValidationConflict() throws {
+        let fixture = try makeSignedArchive(hardenedRuntime: true)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let result = try ReleaseVerifier().inspect(
+            archiveURL: fixture.archive,
+            expectedBundleIdentifier: "com.example.app",
+            policy: .free
+        )
+
+        #expect(
+            result.diagnostics.contains {
+                $0.id == "SRK2102" && $0.severity == .failure
+            })
+    }
+
+    @Test("Blocks unsigned applications for release preparation unless explicitly allowed")
+    func enforcesUnsignedPreparationPolicy() throws {
+        let fixture = try makeSignedArchive(signApp: false)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let defaultResult = try ReleaseVerifier().inspect(
+            archiveURL: fixture.archive,
+            expectedBundleIdentifier: "com.example.app",
+            policy: .free,
+            rejectUnsigned: true
+        )
+        #expect(
+            defaultResult.diagnostics.contains {
+                $0.id == "SRK2101" && $0.severity == .failure
+            })
+
+        var overridePolicy = ReleaseVerificationPolicy.free
+        overridePolicy.allowUnsigned = true
+        let overrideResult = try ReleaseVerifier().inspect(
+            archiveURL: fixture.archive,
+            expectedBundleIdentifier: "com.example.app",
+            policy: overridePolicy,
+            rejectUnsigned: !overridePolicy.allowUnsigned
+        )
+        let diagnosticSummary = overrideResult.diagnostics
+            .map { "[\($0.severity.rawValue)] \($0.title): \($0.detail)" }
+            .joined(separator: "\n")
+        #expect(overrideResult.artifact?.signingKind == .unsigned)
+        #expect(
+            !overrideResult.diagnostics.contains { $0.severity == .failure },
+            Comment(rawValue: diagnosticSummary)
+        )
+        #expect(
+            overrideResult.diagnostics.contains {
+                $0.id == "SRK2101" && $0.severity == .warning
+            })
+    }
+
+    @Test("Reports an invalid nested signature precisely")
+    func detectsInvalidNestedSignature() throws {
+        let fixture = try makeSignedArchive()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let payload = fixture.root.appendingPathComponent("Tampered")
+        try FileManager.default.createDirectory(at: payload, withIntermediateDirectories: true)
+        let extract = try ProcessRunner().run(
+            "/usr/bin/ditto",
+            arguments: ["-x", "-k", fixture.archive.path, payload.path]
+        )
+        try #require(extract.status == 0, Comment(rawValue: extract.standardError))
+        let frameworkBinary = payload.appendingPathComponent(
+            "Example App.app/Contents/Frameworks/Sparkle.framework/Versions/A/Sparkle"
+        )
+        let handle = try FileHandle(forWritingTo: frameworkBinary)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data([0]))
+        try handle.close()
+        let tampered = fixture.root.appendingPathComponent("Tampered.zip")
+        let zip = try ProcessRunner().run(
+            "/usr/bin/ditto",
+            arguments: [
+                "-c", "-k", "--keepParent",
+                payload.appendingPathComponent("Example App.app").path,
+                tampered.path,
+            ]
+        )
+        try #require(zip.status == 0, Comment(rawValue: zip.standardError))
+
+        let result = try ReleaseVerifier().inspect(
+            archiveURL: tampered,
+            expectedBundleIdentifier: "com.example.app",
+            policy: .free
+        )
+
+        #expect(
+            result.diagnostics.contains {
+                $0.id == "SRK2103"
+                    && $0.severity == .failure
+                    && $0.affectedComponent?.contains("Sparkle.framework") == true
+            })
+    }
+
+    private func makeSignedArchive(
+        hardenedRuntime: Bool = false,
+        signApp: Bool = true
+    ) throws -> (root: URL, archive: URL) {
         let manager = FileManager.default
         let root = manager.temporaryDirectory.appendingPathComponent("SparkleRelease-\(UUID().uuidString)")
         let app = root.appendingPathComponent("build/Example App.app")
@@ -299,8 +454,30 @@ struct ReleaseWorkflowTests {
 
         let frameworkSign = try ProcessRunner().run("/usr/bin/codesign", arguments: ["--force", "--sign", "-", framework.path])
         try #require(frameworkSign.status == 0, Comment(rawValue: frameworkSign.standardError))
-        let appSign = try ProcessRunner().run("/usr/bin/codesign", arguments: ["--force", "--sign", "-", app.path])
-        try #require(appSign.status == 0, Comment(rawValue: appSign.standardError))
+        if signApp {
+            var arguments = ["--force", "--sign", "-"]
+            if hardenedRuntime {
+                arguments += ["--options", "runtime"]
+            }
+            arguments.append(app.path)
+            let appSign = try ProcessRunner().run(
+                "/usr/bin/codesign",
+                arguments: arguments
+            )
+            try #require(appSign.status == 0, Comment(rawValue: appSign.standardError))
+        } else {
+            let executableUnsign = try ProcessRunner().run(
+                "/usr/bin/codesign",
+                arguments: [
+                    "--remove-signature",
+                    macOS.appendingPathComponent("Example App").path,
+                ]
+            )
+            try #require(
+                executableUnsign.status == 0,
+                Comment(rawValue: executableUnsign.standardError)
+            )
+        }
 
         let archive = root.appendingPathComponent("Example.App.1.2.0.zip")
         let zip = try ProcessRunner().run("/usr/bin/ditto", arguments: ["-c", "-k", "--keepParent", app.path, archive.path])
@@ -319,6 +496,10 @@ struct ReleaseWorkflowTests {
         let script = #"""
             #!/bin/sh
             set -eu
+            if [ -n "${SRK_TEST_AMBIENT_SECRET:-}" ]; then
+              echo "ambient secret reached helper" >&2
+              exit 91
+            fi
             stage=""
             for argument in "$@"; do stage="$argument"; done
             archive="$(find "$stage" -maxdepth 1 -name '*.zip' -print -quit)"

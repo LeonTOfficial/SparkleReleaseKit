@@ -22,19 +22,32 @@ struct TemplateRenderer {
             resourceRoot.appendingPathComponent("Resources/Templates/\(name)"),
         ]
         guard let data = candidates.compactMap({ try? Data(contentsOf: $0) }).first,
-              var text = String(data: data, encoding: .utf8) else {
+              let text = String(data: data, encoding: .utf8) else {
             throw TemplateError.missing(name)
         }
-        for (placeholder, value) in replacements {
-            text = text.replacingOccurrences(of: "{{\(placeholder)}}", with: value)
+        guard let expression = try? NSRegularExpression(pattern: #"\{\{([A-Z0-9_]+)\}\}"#) else {
+            throw TemplateError.missing(name)
         }
-        return Data(text.utf8)
+        var rendered = text
+        let values = replacements(markdown: name.hasSuffix(".md.template"))
+        let matches = expression.matches(
+            in: text,
+            range: NSRange(text.startIndex..., in: text)
+        )
+        for match in matches.reversed() {
+            guard let wholeRange = Range(match.range(at: 0), in: rendered),
+                  let nameRange = Range(match.range(at: 1), in: rendered),
+                  let value = values[String(rendered[nameRange])] else { continue }
+            rendered.replaceSubrange(wholeRange, with: value)
+        }
+        return Data(rendered.utf8)
     }
 
-    private var replacements: [String: String] {
-        [
+    private func replacements(markdown: Bool) -> [String: String] {
+        let raw = [
             "APP_NAME": configuration.app.name,
             "BUNDLE_ID": configuration.app.bundleIdentifier,
+            "TARGET": configuration.project.target ?? configuration.app.name,
             "SCHEME": configuration.project.scheme,
             "CONTAINER": configuration.project.container,
             "CONFIGURATION": configuration.project.configuration,
@@ -46,12 +59,27 @@ struct TemplateRenderer {
             "FEED_URL": configuration.updates.feedURL,
             "SPARKLE_VERSION": configuration.updates.sparkleVersion,
             "APP_STYLE": configuration.app.style.rawValue,
+            "SANDBOX_STATUS": configuration.app.sandboxed.map { $0 ? "enabled" : "disabled" } ?? "not detected",
+            "RELEASE_MODE": configuration.distribution.releaseMode.rawValue,
+            "TEMPLATE": configuration.project.template.rawValue,
             "MINIMUM_MACOS": configuration.app.minimumMacOS,
         ]
+        guard markdown else { return raw }
+        return raw.mapValues(markdownEscaped)
     }
 
     private func yamlString(_ value: String) -> String {
         let encoded = try? JSONEncoder().encode(value)
         return encoded.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+    }
+
+    private func markdownEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "`", with: "\\`")
+            .replacingOccurrences(of: "[", with: "\\[")
+            .replacingOccurrences(of: "]", with: "\\]")
+            .replacingOccurrences(of: "<", with: "\\<")
+            .replacingOccurrences(of: ">", with: "\\>")
     }
 }

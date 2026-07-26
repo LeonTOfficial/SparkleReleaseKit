@@ -126,11 +126,39 @@ struct ConfigurationStoreTests {
 
         let configuration = try ConfigurationStore().load(from: url)
 
-        #expect(configuration.schemaVersion == 2)
+        #expect(configuration.schemaVersion == SparkleKitConfiguration.currentSchemaVersion)
         #expect(configuration.distribution.releaseMode == .free)
         #expect(!configuration.distribution.requireDeveloperID)
         #expect(!configuration.distribution.requireNotarization)
         #expect(configuration.distribution.requireSparkleSignature)
+    }
+
+    @Test("Migrates schema v2 configuration with deterministic v3 defaults")
+    func migratesSchemaV2Configuration() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let url = root.appendingPathComponent("sparklekit.json")
+        let publicKey = Data(repeating: 7, count: 32).base64EncodedString()
+        try """
+        {
+          "$schema": "\(SparkleKitConfiguration.schemaURL)",
+          "schemaVersion": 2,
+          "app": {"name":"Example App","bundleIdentifier":"com.example.app","minimumMacOS":"13.0","style":"swiftUI"},
+          "project": {"container":"Example App.xcodeproj","scheme":"Example App","configuration":"Release","infoPlist":"Example App/Info.plist"},
+          "github": {"owner":"example","repository":"example-app","pagesBranch":"gh-pages"},
+          "updates": {"sparkleVersion":"2.9.4","feedURL":"https://example.com/appcast.xml","publicEDKey":"\(publicKey)","automaticChecks":true,"automaticDownloads":false},
+          "distribution": {"installer":"dmg","updateArchive":"zip","releaseMode":"free","requireSparkleSignature":true,"requireDeveloperID":false,"requireNotarization":false,"allowAdHocSigning":true,"expectedArchitectures":["arm64","x86_64"]}
+        }
+        """.write(to: url, atomically: true, encoding: .utf8)
+
+        let configuration = try ConfigurationStore().load(from: url)
+
+        #expect(configuration.schemaVersion == 3)
+        #expect(configuration.app.sandboxed == nil)
+        #expect(configuration.project.target == nil)
+        #expect(configuration.project.template == .auto)
+        #expect(configuration.project.generateWorkflow)
     }
 
     @Test("Keeps free and Developer ID distribution policies distinct")

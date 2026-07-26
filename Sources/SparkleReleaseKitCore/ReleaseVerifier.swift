@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct ReleaseVerifier: Sendable {
@@ -11,19 +12,22 @@ public struct ReleaseVerifier: Sendable {
     public func verify(
         archiveURL: URL,
         expectedBundleIdentifier: String? = nil,
-        policy: ReleaseVerificationPolicy = .free
+        policy: ReleaseVerificationPolicy = .free,
+        rejectUnsigned: Bool = false
     ) throws -> [Diagnostic] {
         try inspect(
             archiveURL: archiveURL,
             expectedBundleIdentifier: expectedBundleIdentifier,
-            policy: policy
+            policy: policy,
+            rejectUnsigned: rejectUnsigned
         ).diagnostics
     }
 
     public func inspect(
         archiveURL: URL,
         expectedBundleIdentifier: String? = nil,
-        policy: ReleaseVerificationPolicy = .free
+        policy: ReleaseVerificationPolicy = .free,
+        rejectUnsigned: Bool = false
     ) throws -> ReleaseInspectionResult {
         try policy.validate()
         guard FileManager.default.fileExists(atPath: archiveURL.path) else {
@@ -32,58 +36,86 @@ public struct ReleaseVerifier: Sendable {
                 diagnostics: [.init(.failure, "Release archive", "The file does not exist: \(archiveURL.path)")]
             )
         }
-        let archiveValues = try archiveURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-        guard archiveValues.isRegularFile == true, archiveValues.isSymbolicLink != true else {
+        let archiveExtension = archiveURL.pathExtension.lowercased()
+        guard ["zip", "dmg"].contains(archiveExtension) else {
             return ReleaseInspectionResult(
                 metadata: nil,
-                diagnostics: [.init(.failure, "Release archive", "The archive must be a regular, non-symlink file.")]
-            )
-        }
-        let archiveAttributes = try FileManager.default.attributesOfItem(atPath: archiveURL.path)
-        let archiveBytes = (archiveAttributes[.size] as? NSNumber)?.int64Value ?? 0
-        guard archiveBytes > 0, archiveBytes <= Self.maximumArchiveBytes else {
-            return ReleaseInspectionResult(
-                metadata: nil,
-                diagnostics: [.init(.failure, "Archive size", "The archive is empty or exceeds the 8 GiB safety limit.")]
+                diagnostics: [.init(.failure, "Archive format", "Only ZIP and DMG release archives are currently supported.")]
             )
         }
 
         let temporary = FileManager.default.temporaryDirectory
             .appendingPathComponent("SparkleReleaseKit-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: temporary.path)
         var mountedURL: URL?
         defer {
             if let mountedURL {
-                _ = try? ProcessRunner().run("/usr/bin/hdiutil", arguments: ["detach", mountedURL.path])
+                _ = try? ProcessRunner().run(
+                    "/usr/bin/hdiutil",
+                    arguments: ["detach", mountedURL.path],
+                    timeout: 30
+                )
             }
             try? FileManager.default.removeItem(at: temporary)
         }
 
-        let checksum = try FileDigest.sha256(of: archiveURL)
+        let snapshot: StableFileSnapshot
+        do {
+            snapshot = try StableFileSnapshot.create(
+                from: archiveURL,
+                in: temporary.appendingPathComponent("source"),
+                maximumBytes: Self.maximumArchiveBytes,
+                fileName: "release.\(archiveExtension)"
+            )
+        } catch {
+            return ReleaseInspectionResult(
+                metadata: nil,
+                diagnostics: [.init(.failure, "Release archive", error.localizedDescription)]
+            )
+        }
+        guard snapshot.byteCount > 0 else {
+            return ReleaseInspectionResult(
+                metadata: nil,
+                diagnostics: [.init(.failure, "Archive size", "The archive is empty.")]
+            )
+        }
+        let archive = snapshot.url
+        let archiveBytes = snapshot.byteCount
+        let checksum = try FileDigest.sha256(of: archive)
         var diagnostics: [Diagnostic] = [
             .init(.pass, "Archive SHA-256", checksum),
             .init(.pass, "Release policy", "Requested \(policy.releaseMode.rawValue) distribution mode."),
         ]
         let extracted: URL
-        switch archiveURL.pathExtension.lowercased() {
+        switch archiveExtension {
         case "zip":
-            let preflight = try validateZIP(archiveURL)
+            let preflight = try validateZIP(archive)
             diagnostics += preflight
             guard !preflight.contains(where: { $0.severity == .failure }) else {
                 return ReleaseInspectionResult(metadata: nil, diagnostics: diagnostics)
             }
-            let result = try ProcessRunner().run("/usr/bin/ditto", arguments: ["-x", "-k", archiveURL.path, temporary.path])
-            guard result.status == 0 else {
+            let payload = temporary.appendingPathComponent("payload")
+            try FileManager.default.createDirectory(at: payload, withIntermediateDirectories: true)
+            let result = try ProcessRunner().run(
+                "/usr/bin/ditto",
+                arguments: ["-x", "-k", archive.path, payload.path],
+                timeout: 300
+            )
+            guard processSucceeded(result) else {
                 diagnostics.append(.init(.failure, "ZIP extraction", result.standardError))
                 return ReleaseInspectionResult(metadata: nil, diagnostics: diagnostics)
             }
-            extracted = temporary
+            extracted = payload
         case "dmg":
             let mount = temporary.appendingPathComponent("mount")
             try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
             let result = try ProcessRunner().run(
-                "/usr/bin/hdiutil", arguments: ["attach", "-nobrowse", "-readonly", "-mountpoint", mount.path, archiveURL.path])
-            guard result.status == 0 else {
+                "/usr/bin/hdiutil",
+                arguments: ["attach", "-nobrowse", "-readonly", "-mountpoint", mount.path, archive.path],
+                timeout: 120
+            )
+            guard processSucceeded(result) else {
                 diagnostics.append(.init(.failure, "DMG mount", result.standardError))
                 return ReleaseInspectionResult(metadata: nil, diagnostics: diagnostics)
             }
@@ -91,15 +123,12 @@ public struct ReleaseVerifier: Sendable {
             mountedURL = mount
             diagnostics.append(.init(.pass, "DMG mount", "Mounted the disk image read-only."))
         default:
-            return ReleaseInspectionResult(
-                metadata: nil,
-                diagnostics: [.init(.failure, "Archive format", "Only ZIP and DMG release archives are currently supported.")]
-            )
+            preconditionFailure("Archive extension was validated before inspection.")
         }
 
         let treeDiagnostics = validateExtractedTree(
             root: extracted,
-            allowApplicationsLink: archiveURL.pathExtension.lowercased() == "dmg"
+            allowApplicationsLink: archiveExtension == "dmg"
         )
         diagnostics += treeDiagnostics
         guard !treeDiagnostics.contains(where: { $0.severity == .failure }) else {
@@ -163,14 +192,18 @@ public struct ReleaseVerifier: Sendable {
         )
         diagnostics += architectureResult.diagnostics
 
-        let signing = try inspectCodeSignature(appURL: appURL, policy: policy)
+        let signing = try inspectCodeSignature(
+            appURL: appURL,
+            policy: policy,
+            rejectUnsigned: rejectUnsigned
+        )
         diagnostics += signing.diagnostics
 
         let gatekeeper = try ProcessRunner().run(
             "/usr/sbin/spctl",
             arguments: ["--assess", "--type", "execute", "--verbose=2", appURL.path]
         )
-        let gatekeeperAccepted = gatekeeper.status == 0
+        let gatekeeperAccepted = processSucceeded(gatekeeper)
         if gatekeeperAccepted {
             diagnostics.append(.init(.pass, "Gatekeeper assessment", "macOS accepted the application for execution."))
         } else if policy.requireNotarization {
@@ -195,7 +228,7 @@ public struct ReleaseVerifier: Sendable {
             "/usr/bin/xcrun",
             arguments: ["stapler", "validate", appURL.path]
         )
-        let stapledTicket = stapler.status == 0
+        let stapledTicket = processSucceeded(stapler)
         if stapledTicket {
             diagnostics.append(.init(.pass, "Notarization ticket", "A stapled Apple notarization ticket is valid."))
         } else if policy.requireNotarization {
@@ -262,6 +295,7 @@ public struct ReleaseVerifier: Sendable {
             requireDeveloperID: notarizationRequired,
             requireNotarization: notarizationRequired,
             allowAdHocSigning: !notarizationRequired,
+            allowUnsigned: false,
             expectedArchitectures: [],
             expectedTeamIdentifier: nil
         )
@@ -295,10 +329,16 @@ public struct ReleaseVerifier: Sendable {
             )
         }
         let result = try ProcessRunner().run("/usr/bin/lipo", arguments: ["-archs", executableURL.path])
-        guard result.status == 0 else {
+        guard processSucceeded(result) else {
             return .init(
                 architectures: [],
-                diagnostics: [.init(.failure, "Executable architectures", result.standardError)]
+                diagnostics: [
+                    .init(
+                        .failure,
+                        "Executable architectures",
+                        processFailureDetail(result, fallback: "lipo could not inspect the main executable.")
+                    )
+                ]
             )
         }
         let detected = Array(
@@ -339,19 +379,32 @@ public struct ReleaseVerifier: Sendable {
 
     private func inspectCodeSignature(
         appURL: URL,
-        policy: ReleaseVerificationPolicy
+        policy: ReleaseVerificationPolicy,
+        rejectUnsigned: Bool
     ) throws -> SigningInspection {
         let verification = try ProcessRunner().run(
             "/usr/bin/codesign",
-            arguments: ["--verify", "--deep", "--strict", "--verbose=2", appURL.path]
+            arguments: ["--verify", "--strict", "--verbose=2", appURL.path],
+            timeout: 60
         )
         let details = try ProcessRunner().run(
             "/usr/bin/codesign",
-            arguments: ["--display", "--verbose=4", appURL.path]
+            arguments: ["--display", "--verbose=4", appURL.path],
+            timeout: 60
         )
         let output = details.standardOutput + "\n" + details.standardError
+        let bundleSignatureURL = appURL.appendingPathComponent(
+            "Contents/_CodeSignature/CodeResources"
+        )
+        let bundleSignatureValues = try? bundleSignatureURL.resourceValues(
+            forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
+        )
+        let hasOuterBundleSignature =
+            bundleSignatureValues?.isRegularFile == true
+            && bundleSignatureValues?.isSymbolicLink != true
         let unsigned =
-            output.localizedCaseInsensitiveContains("code object is not signed")
+            !hasOuterBundleSignature
+            || output.localizedCaseInsensitiveContains("code object is not signed")
             || verification.standardError.localizedCaseInsensitiveContains("code object is not signed")
         let kind = classifySignature(output: output, unsigned: unsigned)
         let teamIdentifier = capture(#"TeamIdentifier=([^\r\n]+)"#, in: output).flatMap {
@@ -360,7 +413,15 @@ public struct ReleaseVerifier: Sendable {
         let hardenedRuntime = output.contains("(runtime)") || output.contains("Runtime Version=")
         var diagnostics: [Diagnostic] = []
 
-        if verification.status != 0 && !unsigned {
+        if (!processOutputComplete(verification) || !processOutputComplete(details)) && !unsigned {
+            diagnostics.append(
+                .init(
+                    .failure,
+                    "Code signature",
+                    "Code-signing output was incomplete or exceeded its timeout.",
+                    remediation: "Run codesign locally, resolve the timeout or excessive output, and retry."
+                ))
+        } else if verification.status != 0 && !unsigned {
             diagnostics.append(
                 .init(
                     .failure,
@@ -384,10 +445,12 @@ public struct ReleaseVerifier: Sendable {
             case .unsigned:
                 diagnostics.append(
                     .init(
-                        policy.allowAdHocSigning && !policy.requireDeveloperID ? .warning : .failure,
+                        rejectUnsigned || policy.requireDeveloperID ? .failure : .warning,
                         "Code signature",
                         "The application is unsigned. Sparkle EdDSA can still authenticate the update archive, but macOS trust and update installation behavior are weaker.",
-                        remediation: "Prefer a consistent ad-hoc signature for free distribution, or use Developer ID."
+                        remediation: rejectUnsigned
+                            ? "Apply a consistent ad-hoc signature, or deliberately pass --allow-unsigned and record the exception."
+                            : "Prefer a consistent ad-hoc signature for free distribution, or use Developer ID."
                     ))
             case .appleDevelopment:
                 diagnostics.append(
@@ -445,12 +508,288 @@ public struct ReleaseVerifier: Sendable {
                 ))
         }
 
+        let nested = try inspectNestedCodeSignatures(
+            appURL: appURL,
+            outerTeamIdentifier: teamIdentifier,
+            outerIsUnsigned: kind == .unsigned,
+            allowUnsignedNested:
+                kind == .unsigned
+                && !rejectUnsigned
+                && !policy.requireDeveloperID
+        )
+        diagnostics += nested
+
+        let entitlements = inspectEntitlements(appURL)
+        let libraryValidationDisabled =
+            entitlementBool("com.apple.security.cs.disable-library-validation", in: entitlements)
+        let sparkleEmbedded = FileManager.default.fileExists(
+            atPath: appURL.appendingPathComponent("Contents/Frameworks/Sparkle.framework").path
+        )
+        if kind == .adHoc && hardenedRuntime && sparkleEmbedded && !libraryValidationDisabled {
+            diagnostics.append(
+                .init(
+                    .failure,
+                    "Library Validation",
+                    "The app is ad-hoc signed with Hardened Runtime while Library Validation remains enabled; macOS may reject embedded Sparkle code.",
+                    remediation: "Use a compatible signing configuration, or disable Library Validation only after reviewing the security consequences.",
+                    id: "SRK2102",
+                    affectedComponent: appURL.lastPathComponent,
+                    evidence: "ad-hoc signature, Hardened Runtime, embedded Sparkle.framework",
+                    documentationURL: DiagnosticCatalog.definition(for: "SRK2102")?.documentationURL
+                ))
+        } else if hardenedRuntime && libraryValidationDisabled {
+            diagnostics.append(
+                .init(
+                    .warning,
+                    "Library Validation",
+                    "Library Validation is disabled by entitlement. This can be required by some updater designs, but it weakens a Hardened Runtime protection.",
+                    remediation: "Keep this entitlement only when the selected Sparkle integration requires it.",
+                    id: "SRK2102"
+                ))
+        } else if hardenedRuntime {
+            diagnostics.append(
+                .init(
+                    .pass,
+                    "Library Validation",
+                    "Hardened Runtime is enabled and no entitlement disables Library Validation.",
+                    id: "SRK2102"
+                ))
+        } else {
+            diagnostics.append(
+                .init(
+                    .warning,
+                    "Library Validation",
+                    "Hardened Runtime is not enabled, so Library Validation is not providing this protection.",
+                    id: "SRK2102"
+                ))
+        }
+
+        let sandboxed = entitlementBool("com.apple.security.app-sandbox", in: entitlements)
+        let networkClient = entitlementBool("com.apple.security.network.client", in: entitlements)
+        if sandboxed && !networkClient {
+            diagnostics.append(
+                .init(
+                    .failure,
+                    "Sandbox entitlements",
+                    "The app sandbox is enabled, but outgoing network access is missing.",
+                    remediation: "Enable the network client entitlement after confirming it matches the app's update design.",
+                    id: "SRK2204",
+                    affectedComponent: appURL.lastPathComponent,
+                    evidence: "com.apple.security.app-sandbox=true; com.apple.security.network.client is absent",
+                    documentationURL: DiagnosticCatalog.definition(for: "SRK2204")?.documentationURL
+                ))
+        } else {
+            diagnostics.append(
+                .init(
+                    .pass,
+                    "Sandbox entitlements",
+                    sandboxed
+                        ? "The app sandbox and outgoing network access entitlements are present."
+                        : "The application is not sandboxed; no sandbox network entitlement is required.",
+                    id: "SRK2204"
+                ))
+        }
+
         return .init(
             kind: kind,
             teamIdentifier: teamIdentifier,
             hardenedRuntime: hardenedRuntime,
             diagnostics: diagnostics
         )
+    }
+
+    private func inspectNestedCodeSignatures(
+        appURL: URL,
+        outerTeamIdentifier: String?,
+        outerIsUnsigned: Bool,
+        allowUnsignedNested: Bool
+    ) throws -> [Diagnostic] {
+        let discovery = discoverCodeObjects(in: appURL)
+        guard !discovery.truncated else {
+            return [
+                .init(
+                    .failure,
+                    "Nested code signatures",
+                    "The application contains more than 512 relevant nested code objects.",
+                    remediation: "Review the unexpected bundle structure before release.",
+                    id: "SRK2103"
+                )
+            ]
+        }
+
+        var diagnostics: [Diagnostic] = []
+        for codeURL in discovery.urls {
+            let relative = relativePath(codeURL, to: appURL)
+            let verification = try ProcessRunner().run(
+                "/usr/bin/codesign",
+                arguments: ["--verify", "--strict", "--verbose=2", codeURL.path],
+                timeout: 30
+            )
+            let details = try ProcessRunner().run(
+                "/usr/bin/codesign",
+                arguments: ["--display", "--verbose=4", codeURL.path],
+                timeout: 30
+            )
+            let output = details.standardOutput + "\n" + details.standardError
+            let verificationOutput =
+                verification.standardOutput + "\n" + verification.standardError
+            let nestedUnsigned =
+                output.localizedCaseInsensitiveContains("code object is not signed")
+                || verificationOutput.localizedCaseInsensitiveContains("code object is not signed")
+            let nestedTeam = capture(#"TeamIdentifier=([^\r\n]+)"#, in: output).flatMap {
+                $0 == "not set" ? nil : $0
+            }
+            let valid = processSucceeded(verification) && processOutputComplete(details)
+            let teamMatches =
+                outerTeamIdentifier == nil
+                || nestedTeam == nil
+                || nestedTeam == outerTeamIdentifier
+            if valid && teamMatches {
+                diagnostics.append(
+                    .init(
+                        .pass,
+                        "Nested signature \(relative)",
+                        nestedTeam.map { "Valid individual signature for Team ID \($0)." }
+                            ?? "Valid individual code signature.",
+                        id: "SRK2103",
+                        affectedComponent: relative
+                    ))
+            } else if nestedUnsigned && allowUnsignedNested {
+                diagnostics.append(
+                    .init(
+                        .warning,
+                        "Nested signature \(relative)",
+                        "This nested code object is unsigned under the explicit unsigned-release exception.",
+                        remediation: "Prefer signing every nested executable before signing the outer app bundle.",
+                        id: "SRK2103",
+                        affectedComponent: relative
+                    ))
+            } else {
+                let detail: String
+                if !valid {
+                    detail = processFailureDetail(verification, fallback: "The individual code signature is invalid.")
+                } else {
+                    detail = "Nested Team ID \(nestedTeam ?? "none") does not match outer Team ID \(outerTeamIdentifier ?? "none")."
+                }
+                diagnostics.append(
+                    .init(
+                        .failure,
+                        "Nested signature \(relative)",
+                        detail,
+                        remediation: "Sign nested code first with the intended identity, then sign the outer app.",
+                        id: "SRK2103",
+                        affectedComponent: relative
+                    ))
+            }
+        }
+
+        if outerIsUnsigned {
+            diagnostics.append(
+                .init(
+                    .warning,
+                    "Nested code signatures",
+                    "Nested code was inspected individually, but the recursive outer-bundle check cannot succeed because the application itself is unsigned.",
+                    remediation: "Prefer an ad-hoc or Developer ID outer signature before release.",
+                    id: "SRK2103"
+                ))
+        } else {
+            let deep = try ProcessRunner().run(
+                "/usr/bin/codesign",
+                arguments: ["--verify", "--deep", "--strict", "--verbose=2", appURL.path],
+                timeout: 60
+            )
+            diagnostics.append(
+                .init(
+                    processSucceeded(deep) ? .pass : .failure,
+                    "Nested code signatures",
+                    processSucceeded(deep)
+                        ? "Individual checks passed and the additional recursive codesign check succeeded."
+                        : processFailureDetail(deep, fallback: "The additional recursive codesign check failed."),
+                    remediation: processSucceeded(deep)
+                        ? nil : "Repair the reported nested signature and rebuild the archive.",
+                    id: "SRK2103"
+                ))
+        }
+        return diagnostics
+    }
+
+    private func discoverCodeObjects(in appURL: URL) -> (urls: [URL], truncated: Bool) {
+        guard let enumerator = FileManager.default.enumerator(
+            at: appURL,
+            includingPropertiesForKeys: [
+                .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .isExecutableKey,
+            ],
+            options: []
+        ) else { return ([], false) }
+
+        let bundleExtensions: Set<String> = ["app", "appex", "bundle", "framework", "plugin", "xpc"]
+        var result: [URL] = []
+        var seen: Set<String> = []
+        for case let url as URL in enumerator {
+            guard result.count < 512 else { return (result, true) }
+            guard let values = try? url.resourceValues(
+                forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .isExecutableKey]
+            ), values.isSymbolicLink != true else { continue }
+
+            let isBundle = values.isDirectory == true
+                && bundleExtensions.contains(url.pathExtension.lowercased())
+            let isExecutable = values.isRegularFile == true
+                && values.isExecutable == true
+                && isMachO(url)
+            guard isBundle || isExecutable else { continue }
+            let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
+            guard contains(resolved, in: appURL.standardizedFileURL.resolvingSymlinksInPath()),
+                  seen.insert(resolved.path).inserted else { continue }
+            result.append(resolved)
+        }
+        return (result.sorted { $0.path < $1.path }, false)
+    }
+
+    private func isMachO(_ url: URL) -> Bool {
+        let descriptor = open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard descriptor >= 0 else { return false }
+        defer { close(descriptor) }
+        var bytes = [UInt8](repeating: 0, count: 4)
+        let count = bytes.withUnsafeMutableBytes {
+            read(descriptor, $0.baseAddress, $0.count)
+        }
+        guard count == 4 else { return false }
+        let magics: [[UInt8]] = [
+            [0xFE, 0xED, 0xFA, 0xCE],
+            [0xFE, 0xED, 0xFA, 0xCF],
+            [0xCE, 0xFA, 0xED, 0xFE],
+            [0xCF, 0xFA, 0xED, 0xFE],
+            [0xCA, 0xFE, 0xBA, 0xBE],
+            [0xCA, 0xFE, 0xBA, 0xBF],
+            [0xBE, 0xBA, 0xFE, 0xCA],
+        ]
+        return magics.contains(bytes)
+    }
+
+    private func inspectEntitlements(_ appURL: URL) -> [String: Any] {
+        guard let result = try? ProcessRunner().run(
+            "/usr/bin/codesign",
+            arguments: ["--display", "--entitlements", ":-", "--xml", appURL.path],
+            timeout: 30
+        ), processOutputComplete(result) else { return [:] }
+        let output = result.standardOutput + "\n" + result.standardError
+        guard let start = output.range(of: "<?xml"),
+              let end = output.range(of: "</plist>", options: .backwards) else { return [:] }
+        let xml = String(output[start.lowerBound..<end.upperBound])
+        guard let data = xml.data(using: .utf8),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let dictionary = plist as? [String: Any] else { return [:] }
+        return dictionary
+    }
+
+    private func entitlementBool(_ key: String, in entitlements: [String: Any]) -> Bool {
+        (entitlements[key] as? Bool) == true
+    }
+
+    private func relativePath(_ url: URL, to root: URL) -> String {
+        let base = root.standardizedFileURL.path + "/"
+        let path = url.standardizedFileURL.path
+        return path.hasPrefix(base) ? String(path.dropFirst(base.count)) : url.lastPathComponent
     }
 
     private func classifySignature(output: String, unsigned: Bool) -> CodeSigningKind {
@@ -474,12 +813,15 @@ public struct ReleaseVerifier: Sendable {
     private func validateZIP(_ archiveURL: URL) throws -> [Diagnostic] {
         var diagnostics: [Diagnostic] = []
         let totals = try ProcessRunner().run("/usr/bin/zipinfo", arguments: ["-t", archiveURL.path])
-        guard totals.status == 0,
+        guard processSucceeded(totals),
             let summary = parseZIPSummary(totals.standardOutput)
         else {
             return [
                 .init(
-                    .failure, "ZIP structure", totals.standardError.isEmpty ? "zipinfo could not read the archive." : totals.standardError)
+                    .failure,
+                    "ZIP structure",
+                    processFailureDetail(totals, fallback: "zipinfo could not read the archive.")
+                )
             ]
         }
         guard summary.entries > 0,
@@ -502,8 +844,13 @@ public struct ReleaseVerifier: Sendable {
             ))
 
         let listing = try ProcessRunner().run("/usr/bin/zipinfo", arguments: ["-1", archiveURL.path])
-        guard listing.status == 0 else {
-            diagnostics.append(.init(.failure, "ZIP member paths", listing.standardError))
+        guard processSucceeded(listing) else {
+            diagnostics.append(
+                .init(
+                    .failure,
+                    "ZIP member paths",
+                    processFailureDetail(listing, fallback: "zipinfo could not list every archive member.")
+                ))
             return diagnostics
         }
         guard listing.standardOutput.utf8.count <= Self.maximumListingBytes else {
@@ -628,6 +975,27 @@ public struct ReleaseVerifier: Sendable {
     private func contains(_ candidate: URL, in root: URL) -> Bool {
         let rootPath = root.path.hasSuffix("/") ? root.path : root.path + "/"
         return candidate.path == root.path || candidate.path.hasPrefix(rootPath)
+    }
+
+    private func processSucceeded(_ result: ProcessResult) -> Bool {
+        result.status == 0 && processOutputComplete(result)
+    }
+
+    private func processOutputComplete(_ result: ProcessResult) -> Bool {
+        !result.timedOut
+            && !result.standardOutputTruncated
+            && !result.standardErrorTruncated
+    }
+
+    private func processFailureDetail(_ result: ProcessResult, fallback: String) -> String {
+        if result.timedOut {
+            return "The external verification command exceeded its timeout."
+        }
+        if result.standardOutputTruncated || result.standardErrorTruncated {
+            return "The external verification command produced incomplete output."
+        }
+        let detail = result.standardError.isEmpty ? result.standardOutput : result.standardError
+        return detail.isEmpty ? fallback : detail
     }
 
     private func findApps(in root: URL, waitForMountedVolume: Bool = false) -> [URL] {

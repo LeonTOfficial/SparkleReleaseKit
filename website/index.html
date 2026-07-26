@@ -91,19 +91,25 @@
         </div>
         <div class="terminal" data-reveal aria-label="SparkleReleaseKit command example">
           <div class="terminal-bar"><span></span><span></span><span></span></div>
-          <pre><span class="prompt">$</span> <span class="command">sparklekit setup ~/Projects/MyApp --release-mode free</span>
+          <pre><span class="prompt">$</span> <span class="command">sparklekit quickstart ~/Projects/MyApp --release-mode free</span>
 
 <span class="result">SparkleReleaseKit
-Set up secure Sparkle updates
+Guided Sparkle setup
 
-Success: Created sparklekit.json</span>
+[1/7] Inspecting Xcode project...
+      [PASS] Completed in 0.1s
+[2/7] Reviewing detected application...
+      Target: MyApp
+      Scheme: MyApp
+      [PASS] Selection accepted in 0.0s
+[4/7] Reviewing planned changes...</span>
 
-<span class="prompt">$</span> <span class="command">sparklekit integrate ~/Projects/MyApp</span>
   + AppUpdater.swift
   + sparkle-release.yml
   ~ Info.plist
 
-<span class="result">No files were changed. Add --apply when ready.</span></pre>
+<span class="result">Apply these changes? [y/N]:
+No files were changed.</span></pre>
           <pre class="terminal-followup"><span class="prompt">$</span> <span class="command">sparklekit doctor ~/Projects/MyApp --json</span>
 <span class="result">{ "success": true, "diagnostics": [...] }</span></pre>
         </div>
@@ -114,7 +120,7 @@ Success: Created sparklekit.json</span>
       <div class="section">
         <div class="section-heading" data-reveal><div class="eyebrow">Clear path</div><h2>From app source to tested update.</h2></div>
         <div class="steps" data-reveal>
-          <article class="step"><div><h3>Run setup</h3><p>The CLI detects the existing app and writes public configuration.</p></div></article>
+          <article class="step"><div><h3>Run quickstart</h3><p>The guided CLI detects the app, resolves ambiguity, and groups every choice for review.</p></div></article>
           <article class="step"><div><h3>Add the public key</h3><p>Sparkle keeps the private key in Keychain; only the public EdDSA key enters the app.</p></div></article>
           <article class="step"><div><h3>Review and apply</h3><p>Inspect every path, then generate the integration with timestamped backups.</p></div></article>
           <article class="step"><div><h3>Finish two Xcode steps</h3><p>Add the official package and keep the updater alive from app startup.</p></div></article>

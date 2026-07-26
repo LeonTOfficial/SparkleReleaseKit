@@ -1,5 +1,6 @@
 import Testing
 @testable import SparkleReleaseKitCore
+import Foundation
 
 @Suite("Process execution")
 struct ProcessRunnerTests {
@@ -25,5 +26,22 @@ struct ProcessRunnerTests {
         #expect(result.standardOutput.hasSuffix("end"))
         #expect(result.standardOutput.contains("SparkleReleaseKit omitted"))
         #expect(result.standardOutput.utf8.count < 8_500_000)
+        #expect(result.standardOutputTruncated)
+        #expect(result.standardOutputBytes > 10_000_000)
+    }
+
+    @Test("Terminates a process that exceeds its timeout", .timeLimit(.minutes(1)))
+    func timesOut() throws {
+        let started = Date()
+
+        let result = try ProcessRunner().run(
+            "/bin/sleep",
+            arguments: ["10"],
+            timeout: 0.1
+        )
+
+        #expect(result.timedOut)
+        #expect(result.status == 124)
+        #expect(Date().timeIntervalSince(started) < 5)
     }
 }

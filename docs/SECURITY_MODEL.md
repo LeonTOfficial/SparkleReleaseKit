@@ -35,6 +35,16 @@ SparkleReleaseKit ignores common private-key formats and `.sparklekit/private/`,
 
 After generation, SparkleReleaseKit independently verifies the Ed25519 signature against the exact archive bytes and checks the enclosure filename, size, and build version. This check is independent from `codesign`, Gatekeeper, and notarization.
 
+## Execution boundaries
+
+Passive project inspection is the default. Xcode-backed inspection and `sparklekit test` may execute target-project build scripts or package plug-ins, so they require separate `--allow-project-execution` consent. SparkleReleaseKit enables automatic Xcode package resolution only when `--allow-network` is also supplied.
+
+Guided quickstart asks before project execution and defaults to No. Configuration writes require a later, separate confirmation that also defaults to No. JSON and non-interactive modes never prompt; automation must provide explicit flags.
+
+Project execution is a broad trust decision. A target repository's own build scripts and package plug-ins may perform arbitrary I/O, including network requests, after execution is allowed. `--allow-network` controls the toolkit's package-resolution action; it does not claim to sandbox malicious project code.
+
+`publish preview` does not access the network or perform remote writes. A future publishing command must retain a distinct remote-write approval and narrowly scoped credentials.
+
 ## GitHub Actions
 
 - Give each job only the permissions it needs.

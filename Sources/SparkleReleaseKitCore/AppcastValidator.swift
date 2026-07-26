@@ -26,17 +26,11 @@ public struct AppcastValidator: Sendable {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw AppcastValidationError.missing(fileURL)
         }
-        let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard values.isRegularFile == true,
-            let size = values.fileSize,
-            size <= Self.maximumBytes
-        else {
-            throw AppcastValidationError.tooLarge(values.fileSize ?? -1)
+        guard let data = BoundedFileReader.data(at: fileURL, maximumBytes: Self.maximumBytes) else {
+            let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey])
+            throw AppcastValidationError.tooLarge(values?.fileSize ?? -1)
         }
-        let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
-        if let text = String(data: data, encoding: .utf8),
-            text.range(of: "<!DOCTYPE", options: .caseInsensitive) != nil
-        {
+        if containsEncodedASCII("<!DOCTYPE", in: data) {
             throw AppcastValidationError.malformed("Document type declarations are not allowed.")
         }
 
@@ -150,6 +144,21 @@ public struct AppcastValidator: Sendable {
             enclosures: enclosures,
             diagnostics: diagnostics
         )
+    }
+
+    private func containsEncodedASCII(_ needle: String, in data: Data) -> Bool {
+        let ascii = Array(needle.uppercased().utf8)
+        let patterns: [[UInt8]] = [
+            ascii,
+            ascii.flatMap { [$0, 0] },
+            ascii.flatMap { [0, $0] },
+            ascii.flatMap { [$0, 0, 0, 0] },
+            ascii.flatMap { [0, 0, 0, $0] },
+        ]
+        let normalized = Data(data.map { value in
+            value >= 97 && value <= 122 ? value - 32 : value
+        })
+        return patterns.contains { normalized.range(of: Data($0)) != nil }
     }
 }
 

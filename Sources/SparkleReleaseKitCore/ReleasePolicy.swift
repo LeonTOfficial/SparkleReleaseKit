@@ -20,19 +20,22 @@ public struct ReleasePolicyOverrides: Equatable, Sendable {
     public var requireDeveloperID: Bool
     public var requireNotarization: Bool
     public var allowAdHocSigning: Bool
+    public var allowUnsigned: Bool
 
     public init(
         releaseMode: ReleaseMode? = nil,
         requireSparkleSignature: Bool = false,
         requireDeveloperID: Bool = false,
         requireNotarization: Bool = false,
-        allowAdHocSigning: Bool = false
+        allowAdHocSigning: Bool = false,
+        allowUnsigned: Bool = false
     ) {
         self.releaseMode = releaseMode
         self.requireSparkleSignature = requireSparkleSignature
         self.requireDeveloperID = requireDeveloperID
         self.requireNotarization = requireNotarization
         self.allowAdHocSigning = allowAdHocSigning
+        self.allowUnsigned = allowUnsigned
     }
 }
 
@@ -42,6 +45,7 @@ public struct ReleaseVerificationPolicy: Equatable, Sendable {
     public var requireDeveloperID: Bool
     public var requireNotarization: Bool
     public var allowAdHocSigning: Bool
+    public var allowUnsigned: Bool
     public var expectedArchitectures: [CPUArchitecture]
     public var expectedTeamIdentifier: String?
 
@@ -51,6 +55,7 @@ public struct ReleaseVerificationPolicy: Equatable, Sendable {
         requireDeveloperID: false,
         requireNotarization: false,
         allowAdHocSigning: true,
+        allowUnsigned: false,
         expectedArchitectures: [],
         expectedTeamIdentifier: nil
     )
@@ -61,6 +66,7 @@ public struct ReleaseVerificationPolicy: Equatable, Sendable {
         requireDeveloperID: Bool,
         requireNotarization: Bool,
         allowAdHocSigning: Bool,
+        allowUnsigned: Bool = false,
         expectedArchitectures: [CPUArchitecture],
         expectedTeamIdentifier: String?
     ) {
@@ -69,6 +75,7 @@ public struct ReleaseVerificationPolicy: Equatable, Sendable {
         self.requireDeveloperID = requireDeveloperID
         self.requireNotarization = requireNotarization
         self.allowAdHocSigning = allowAdHocSigning
+        self.allowUnsigned = allowUnsigned
         self.expectedArchitectures = expectedArchitectures.sorted()
         self.expectedTeamIdentifier = expectedTeamIdentifier
     }
@@ -93,6 +100,7 @@ public struct ReleaseVerificationPolicy: Equatable, Sendable {
         allowAdHocSigning =
             overrides.allowAdHocSigning
             || (useConfigurationValues ? distribution.allowAdHocSigning : defaults.allowAdHocSigning)
+        allowUnsigned = overrides.allowUnsigned
         expectedArchitectures = Array(Set(distribution.expectedArchitectures)).sorted()
         expectedTeamIdentifier = distribution.expectedTeamIdentifier
         try validate()
@@ -107,6 +115,9 @@ public struct ReleaseVerificationPolicy: Equatable, Sendable {
         }
         if requireDeveloperID && allowAdHocSigning {
             throw ReleasePolicyError.conflictingMode("Developer ID requirements cannot allow ad-hoc signing")
+        }
+        if allowUnsigned && (requireDeveloperID || requireNotarization) {
+            throw ReleasePolicyError.conflictingMode("unsigned applications cannot satisfy Developer ID or notarization requirements")
         }
         if releaseMode == .free && (requireDeveloperID || requireNotarization || !allowAdHocSigning) {
             throw ReleasePolicyError.conflictingMode(
@@ -136,6 +147,7 @@ public struct ReleaseVerificationPolicy: Equatable, Sendable {
                 requireDeveloperID: true,
                 requireNotarization: true,
                 allowAdHocSigning: false,
+                allowUnsigned: false,
                 expectedArchitectures: [],
                 expectedTeamIdentifier: nil
             )
@@ -146,6 +158,7 @@ public struct ReleaseVerificationPolicy: Equatable, Sendable {
                 requireDeveloperID: false,
                 requireNotarization: false,
                 allowAdHocSigning: true,
+                allowUnsigned: false,
                 expectedArchitectures: [],
                 expectedTeamIdentifier: nil
             )

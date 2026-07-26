@@ -31,7 +31,7 @@ It does **not** replace or fork Sparkle. Sparkle remains the secure update engin
 - Creates a timestamped backup and restores its own changes if integration fails.
 - Supports explicit `free`, `developer-id`, and capability-aware `auto` release modes.
 - Verifies ZIP and DMG archives, safe extraction paths, expansion limits, bundle metadata, CPU architectures, signing class, Team ID, Hardened Runtime, Gatekeeper, notarization staples, and embedded Sparkle.
-- Runs Xcode package resolution and a credential-free Release build with `sparklekit test`.
+- Runs Xcode package resolution and a credential-free Release build with `sparklekit test --allow-project-execution`.
 - Validates appcast structure, credential-free HTTPS enclosure URLs, versions, lengths, and exact 64-byte Ed25519 signature fields.
 - Cryptographically verifies the Ed25519 signature against the exact staged archive, not merely its presence.
 - Stages a signed archive, SHA-256 checksum, deterministic release manifest, release notes, and appcast through `prepare-release`.
@@ -56,8 +56,10 @@ git clone https://github.com/LeonTOfficial/SparkleReleaseKit.git
 cd SparkleReleaseKit
 ./scripts/bootstrap.sh
 ./scripts/install.sh
-./sparklekit setup "/path/to/YourApp"
+sparklekit quickstart "/path/to/YourApp"
 ```
+
+In a terminal, `quickstart` automatically opens the guided seven-step flow. It inspects passively, groups detected values into one review, resolves ambiguous containers, targets, and schemes with numbered choices, and previews every change before asking to apply. Every write confirmation defaults to No; choosing Cancel leaves managed project files unchanged.
 
 Generate your Sparkle EdDSA key once using Sparkle's official `generate_keys` tool. Keep the private key in Keychain and put only the printed public key in your app's `sparklekit.json`:
 
@@ -71,13 +73,13 @@ Preview and apply the integration:
 ./sparklekit integrate "/path/to/YourApp"
 ./sparklekit integrate "/path/to/YourApp" --apply
 ./sparklekit doctor "/path/to/YourApp"
-./sparklekit test "/path/to/YourApp"
+./sparklekit test "/path/to/YourApp" --allow-project-execution
 ```
 
 The generated configuration defaults to free, universal distribution. Choose another policy explicitly when needed:
 
 ```bash
-sparklekit setup "/path/to/YourApp" --release-mode free --architectures arm64,x86_64
+sparklekit quickstart "/path/to/YourApp" --release-mode free --architectures arm64,x86_64
 ```
 
 Finish the two clearly documented Xcode steps in `YourApp/SparkleReleaseKit/INTEGRATION.md`:
@@ -109,16 +111,21 @@ Every release path requires HTTPS and Sparkle EdDSA authentication. Developer ID
 ## Commands
 
 ```text
+sparklekit quickstart [project-path] [options]
 sparklekit setup [project-path] [options]
 sparklekit integrate [project-path] [--apply]
-sparklekit doctor [project-path] [--json]
-sparklekit test [project-path] [--json]
+sparklekit doctor [project-path] [--fix [--apply]] [--json]
+sparklekit test [project-path] --allow-project-execution [--allow-network] [--json]
 sparklekit verify <archive.zip|archive.dmg> [--project path] [--json]
 sparklekit verify-update <archive> --appcast PATH --version BUILD [options]
 sparklekit validate-feed <appcast.xml> [--json]
 sparklekit prepare-release <archive> --version X.Y.Z [options]
+sparklekit publish preview [stage-path] [--project path] [--json]
+sparklekit explain <diagnostic-id> [--json]
 sparklekit version
 ```
+
+Guided writes require confirmation and non-interactive writes require `--apply`. `--json` emits one machine-readable document without prompts or progress output. Release preparation writes only to isolated staging, while `publish preview` performs no network request or remote write.
 
 Install the CLI from a source checkout for your user account:
 
@@ -150,7 +157,7 @@ Give your coding assistant this repository and the target macOS repository, then
 ```text
 Integrate SparkleReleaseKit into this macOS app.
 Read AGENTS.md and AI/AI_INTEGRATION.md before editing anything.
-Run sparklekit setup and doctor, preview integration before applying it,
+Run sparklekit quickstart --non-interactive and doctor, preview integration before applying it,
 never expose private signing material, use --json for deterministic checks,
 and verify the final Xcode build and archive.
 ```

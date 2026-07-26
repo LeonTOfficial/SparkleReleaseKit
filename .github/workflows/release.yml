@@ -16,6 +16,9 @@ jobs:
     steps:
       - name: Check out tagged source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify tag and changelog
         shell: bash
@@ -23,6 +26,11 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag_commit="$(/usr/bin/git rev-parse "$GITHUB_REF_NAME^{commit}")"
+          /usr/bin/git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main || {
+            echo "Release tag must point to a commit reachable from origin/main." >&2
+            exit 1
+          }
           grep -F "[$version]" CHANGELOG.md
           grep -F "static let version = \"$version\"" Sources/SparkleReleaseKitCLI/SparkleKitCLI.swift
 

@@ -33,7 +33,7 @@
 ## Verification
 
 - [ ] `sparklekit doctor --json` has zero failures.
-- [ ] `sparklekit test --json` has zero failures.
+- [ ] After explicit target-project execution approval, `sparklekit test --allow-project-execution --json` has zero failures.
 - [ ] Unit tests pass.
 - [ ] Release configuration builds.
 - [ ] ZIP or DMG contains one expected `.app`.

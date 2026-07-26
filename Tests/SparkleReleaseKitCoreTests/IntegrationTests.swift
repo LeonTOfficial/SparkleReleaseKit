@@ -54,6 +54,48 @@ struct IntegrationTests {
         }
     }
 
+    @Test("Requires an explicit container when multiple peers are present")
+    func rejectsAmbiguousContainers() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        try FileManager.default.createDirectory(
+            at: fixture.appendingPathComponent("Second App.xcodeproj"),
+            withIntermediateDirectories: true
+        )
+
+        #expect(throws: ProjectDetectionError.self) {
+            try ProjectDetector().detect(at: fixture)
+        }
+
+        let selected = try ProjectDetector().detect(
+            at: fixture,
+            options: .init(container: "Example App.xcodeproj")
+        )
+        #expect(selected.containerURL.lastPathComponent == "Example App.xcodeproj")
+    }
+
+    @Test("Requires an explicit scheme when shared schemes are ambiguous")
+    func rejectsAmbiguousSchemes() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let schemes = fixture.appendingPathComponent("Example App.xcodeproj/xcshareddata/xcschemes")
+        try "<Scheme></Scheme>".write(
+            to: schemes.appendingPathComponent("Beta.xcscheme"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        #expect(throws: ProjectDetectionError.self) {
+            try ProjectDetector().detect(at: fixture)
+        }
+
+        let selected = try ProjectDetector().detect(
+            at: fixture,
+            options: .init(scheme: "Example App")
+        )
+        #expect(selected.scheme == "Example App")
+    }
+
     @Test("Previews without modifying files")
     func dryRun() throws {
         let fixture = try makeFixture()
@@ -70,6 +112,19 @@ struct IntegrationTests {
         #expect(!FileManager.default.fileExists(atPath: fixture.appendingPathComponent("SparkleReleaseKit/AppUpdater.swift").path))
     }
 
+    @Test("Template values are substituted once and escaped for Markdown")
+    func rendersTemplatesWithoutRecursiveReplacement() throws {
+        var configuration = fixtureConfiguration()
+        configuration.app.name = "{{SCHEME}} [docs]"
+
+        let data = try TemplateRenderer(configuration: configuration)
+            .render(named: "INTEGRATION.md.template")
+        let text = try #require(String(data: data, encoding: .utf8))
+
+        #expect(text.contains("{{SCHEME}} \\[docs\\]"))
+        #expect(text.contains("| Shared scheme | `Example App` |"))
+    }
+
     @Test("Applies idempotently and patches Info.plist")
     func apply() throws {
         let fixture = try makeFixture()
@@ -77,10 +132,14 @@ struct IntegrationTests {
         let configuration = fixtureConfiguration()
 
         let first = try Integrator().integrate(projectRoot: fixture, configuration: configuration, apply: true)
-        let second = try Integrator().integrate(projectRoot: fixture, configuration: configuration, apply: false)
+        let preview = try Integrator().integrate(projectRoot: fixture, configuration: configuration, apply: false)
+        let second = try Integrator().integrate(projectRoot: fixture, configuration: configuration, apply: true)
 
         #expect(first.applied)
         #expect(first.backupURL != nil)
+        #expect(preview.changes.allSatisfy { $0.kind == .unchanged })
+        #expect(!second.applied)
+        #expect(second.backupURL == nil)
         #expect(second.changes.allSatisfy { $0.kind == .unchanged })
 
         let plistURL = fixture.appendingPathComponent("Example App/Info.plist")
@@ -89,6 +148,125 @@ struct IntegrationTests {
         #expect(plist["SUFeedURL"] as? String == configuration.updates.feedURL)
         #expect(plist["SUPublicEDKey"] as? String == configuration.updates.publicEDKey)
         #expect(FileManager.default.fileExists(atPath: fixture.appendingPathComponent(".github/workflows/sparkle-release.yml").path))
+    }
+
+    @Test("Rolls back every managed write after an apply failure")
+    func rollsBackFailedApply() throws {
+        enum InjectedFailure: Error {
+            case stopAfterPlistWrite
+        }
+
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let configuration = fixtureConfiguration()
+        let preview = try Integrator().integrate(
+            projectRoot: fixture,
+            configuration: configuration,
+            apply: false
+        )
+        let before = preview.changes.map { change in
+            (
+                path: change.relativePath,
+                data: try? Data(
+                    contentsOf: fixture.appendingPathComponent(change.relativePath)
+                )
+            )
+        }
+        let integrator = Integrator { _, path in
+            if path == "Example App/Info.plist" {
+                throw InjectedFailure.stopAfterPlistWrite
+            }
+        }
+
+        #expect(throws: InjectedFailure.self) {
+            try integrator.integrate(
+                projectRoot: fixture,
+                configuration: configuration,
+                apply: true
+            )
+        }
+
+        for snapshot in before {
+            let destination = fixture.appendingPathComponent(snapshot.path)
+            if let data = snapshot.data {
+                #expect(try Data(contentsOf: destination) == data)
+            } else {
+                #expect(!FileManager.default.fileExists(atPath: destination.path))
+            }
+        }
+    }
+
+    @Test("Refuses to overwrite pre-existing custom updater code")
+    func preservesCustomUpdater() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let updater = fixture.appendingPathComponent("SparkleReleaseKit/AppUpdater.swift")
+        try FileManager.default.createDirectory(
+            at: updater.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "final class CustomUpdater {}\n".write(
+            to: updater,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        #expect(throws: IntegrationError.self) {
+            try Integrator().integrate(
+                projectRoot: fixture,
+                configuration: fixtureConfiguration(),
+                apply: false
+            )
+        }
+        #expect(try String(contentsOf: updater, encoding: .utf8) == "final class CustomUpdater {}\n")
+    }
+
+    @Test("Refuses to overwrite a generated file modified after integration")
+    func preservesModifiedGeneratedFile() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let configuration = fixtureConfiguration()
+        _ = try Integrator().integrate(
+            projectRoot: fixture,
+            configuration: configuration,
+            apply: true
+        )
+        let updater = fixture.appendingPathComponent("SparkleReleaseKit/AppUpdater.swift")
+        let customLine = "\n// Local customization\n"
+        let handle = try FileHandle(forWritingTo: updater)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(customLine.utf8))
+        try handle.close()
+
+        #expect(throws: IntegrationError.self) {
+            try Integrator().integrate(
+                projectRoot: fixture,
+                configuration: configuration,
+                apply: false
+            )
+        }
+        #expect(try String(contentsOf: updater, encoding: .utf8).hasSuffix(customLine))
+    }
+
+    @Test("Refuses in-project symbolic links for managed writes")
+    func rejectsInProjectWriteSymlink() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let target = fixture.appendingPathComponent("README.md")
+        try "keep me\n".write(to: target, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            at: fixture.appendingPathComponent(".gitignore"),
+            withDestinationURL: target
+        )
+
+        #expect(throws: IntegrationError.self) {
+            try Integrator().integrate(
+                projectRoot: fixture,
+                configuration: fixtureConfiguration(),
+                apply: true
+            )
+        }
+        #expect(try String(contentsOf: target, encoding: .utf8) == "keep me\n")
     }
 
     @Test("Rejects a generated path that escapes through a symlink")
