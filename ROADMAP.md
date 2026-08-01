@@ -20,24 +20,28 @@
 - SHA-256 checksum and deterministic release manifest generation.
 - Schema v1 migration and schema v2 policy contract.
 
-## 0.3 - Publication preview
+## 0.3 - Guided operation and publication preview
 
-- Test-feed generation.
-- GitHub Release and Pages publication preview.
-- Optional SBOM and provenance adapters without claiming incomplete coverage.
+- Beginner-friendly guided quickstart and deterministic progress.
+- Stable diagnostics, repair previews, and versioned JSON envelopes.
+- GitHub Release and Pages publication preview without remote writes.
 
-## 0.4 - Distribution test matrix
+## 0.4 - Secure maintenance and distribution
 
-- End-to-end fixture applications for free and Developer ID release paths.
-- Automated older-to-newer update tests against a temporary HTTPS feed.
-- Sandboxed and non-sandboxed application coverage.
+- Centralized `generate_appcast` trust policy with identity and SHA-256 pins.
+- Signed, bounded, atomic CLI self-update with verified rollback.
+- Plan-first managed project migration with conflicts, diffs, and rollback.
+- Hardened process-tree termination and explicit termination results.
+- Protected release metadata signing, optional Developer ID notarized DMG, and provenance.
+- End-to-end fixture lifecycle for app release, migration, and CLI update.
 
 ## 0.5 - Project adapters
 
 - Tuist adapter.
 - XcodeGen adapter.
 - Multi-target and beta-channel support.
-- Local migration assistant for existing Sparkle integrations.
+- Sandboxed and non-sandboxed runtime update fixtures.
+- Temporary local HTTPS feed harness for full Sparkle UI installation tests.
 
 ## 0.7 - Distribution expansion
 

@@ -25,7 +25,7 @@ expect_usage_error() {
   fi
 }
 
-"$CLI" version | /usr/bin/grep -F "SparkleReleaseKit 0.3.0" >/dev/null
+"$CLI" version | /usr/bin/grep -F "SparkleReleaseKit 0.4.0" >/dev/null
 help_output="$($CLI help)"
 /usr/bin/grep -F "SAFE DEFAULTS" <<<"$help_output" >/dev/null
 /usr/bin/grep -F "quickstart" <<<"$help_output" >/dev/null
@@ -33,6 +33,8 @@ help_output="$($CLI help)"
 /usr/bin/grep -F "explain <diagnostic-id>" <<<"$help_output" >/dev/null
 /usr/bin/grep -F "verify-update" <<<"$help_output" >/dev/null
 /usr/bin/grep -F "free, developer-id, or auto" <<<"$help_output" >/dev/null
+/usr/bin/grep -F "update install" <<<"$help_output" >/dev/null
+/usr/bin/grep -F "project upgrade" <<<"$help_output" >/dev/null
 
 explain_json="$("$CLI" explain SRK2102 --json)"
 EXPLAIN_JSON="$explain_json" /usr/bin/python3 - <<'PY'
@@ -52,7 +54,7 @@ required = {
 }
 if set(payload) != required:
     raise SystemExit(f"Unexpected JSON envelope keys: {sorted(payload)}")
-if payload["schemaVersion"] != "1.0" or payload["toolVersion"] != "0.3.0":
+if payload["schemaVersion"] != "1.0" or payload["toolVersion"] != "0.4.0":
     raise SystemExit("Unexpected CLI JSON contract version")
 if payload["command"] != "explain" or not payload["success"]:
     raise SystemExit("Explain command did not report success")
@@ -300,11 +302,26 @@ if [[ "$doctor_human" == *$'\r'* || "$doctor_human" == *$'\033'* ]]; then
   exit 1
 fi
 
+upgrade_preview="$("$CLI" project upgrade "$fixture_root" --json)"
+UPGRADE_JSON="$upgrade_preview" /usr/bin/python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["UPGRADE_JSON"])
+if payload["command"] != "project upgrade" or not payload["success"]:
+    raise SystemExit("Project upgrade preview did not succeed")
+if payload["metadata"]["applied"]:
+    raise SystemExit("Project upgrade preview unexpectedly wrote files")
+if payload["metadata"]["conflicts"]:
+    raise SystemExit("Unmodified integration unexpectedly has conflicts")
+PY
+
 expect_usage_error "unknown option" doctor --jsno
 expect_usage_error "missing option value" setup --owner
 expect_usage_error "duplicate option" setup --owner example --owner duplicate
 expect_usage_error "extra positional" validate-feed one.xml two.xml
 expect_usage_error "invalid release mode" verify missing.zip --release-mode paid-only
 expect_usage_error "missing appcast" verify-update missing.zip --version 1
+expect_usage_error "unknown update subcommand" update unexpected
 
 echo "CLI contract checks passed."

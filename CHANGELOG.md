@@ -2,6 +2,34 @@
 
 All notable changes to SparkleReleaseKit are documented here. The project follows Semantic Versioning.
 
+## [0.4.0] - 2026-08-01
+
+### Added
+
+- Central `GenerateAppcastTrustPolicy` with canonical paths, regular-file and executable checks, trusted ownership and parent permissions, strict code-signature inspection, signing identifier, Team ID, designated requirement, SHA-256 allowlists, path-source diagnostics, and CI environment opt-in.
+- Signed CLI self-update commands: `update check`, explicit `update install`, verified `update rollback`, local manifest verification, stable JSON, downgrade protection, bounded HTTPS transport, safe archive extraction, atomic activation, and automatic transaction rollback.
+- Optional non-blocking update hints limited to once per 24 hours, local preference controls, and a documented no-telemetry contract.
+- `project upgrade` preview/apply workflow with schema v4 management metadata, original template hashes, bounded redacted diffs, manual-edit conflicts, backups, idempotency, symlink containment, and full rollback.
+- Explicit process termination reason and signal metadata, configurable output retention, and reliable descendant-process termination on timeout.
+- Protected release-environment manifest signing, build metadata, optional Developer ID and Hardened Runtime signing, notarized and stapled DMG generation, Gatekeeper checks, and expanded provenance attestations.
+- Real end-to-end maintenance fixture covering old and new app releases, Sparkle signatures, tampering, policy modes, interrupted staging, project migration, CLI update, and rollback.
+- Dedicated installation, CLI update, and managed-project migration guides.
+
+### Changed
+
+- Configuration schema advances to v4 while schemas v1 through v3 continue to load with controlled defaults.
+- The release manifest records the exact trusted `generate_appcast` digest and signing identifier.
+- `ProcessRunner` preserves its bounded file-backed output capture while callers can choose a smaller hard retained-output limit.
+- CLI and generated metadata report version 0.4.0; Swift 6 mode, macOS 13 minimum, and Sparkle 2.9.4 compatibility remain unchanged.
+
+### Security
+
+- The CLI update private key exists only in the GitHub `release` environment; clients embed only its dedicated public trust root.
+- Downloaded CLI packages are never executed before signed-manifest, length, SHA-256, archive-tree, and strict code-signature verification.
+- CLI rollback references must remain inside private managed storage, match strict semantic versions, and retain a safe resource-bundle tree.
+- Project migrations reject conflicting or duplicate ownership metadata, refuse path-only legacy ownership as overwrite authority, redact sensitive diff lines, and never delete unknown project files.
+- `generate_appcast` receives a minimal environment without ambient GitHub, cloud, SSH-agent, or unrelated CI credentials.
+
 ## [0.3.0] - 2026-07-26
 
 ### Added

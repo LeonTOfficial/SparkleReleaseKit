@@ -3,16 +3,25 @@ import Foundation
 
 public enum ProcessRunnerError: LocalizedError, Equatable {
     case invalidTimeout
+    case invalidOutputLimit
     case couldNotTerminate(Int32)
 
     public var errorDescription: String? {
         switch self {
         case .invalidTimeout:
             "Process timeout must be a finite value greater than zero."
+        case .invalidOutputLimit:
+            "Process output limit must be between 1 byte and 64 MiB."
         case .couldNotTerminate(let pid):
             "Process \(pid) did not stop after the timeout and forced termination."
         }
     }
+}
+
+public enum ProcessTerminationReason: String, Codable, Equatable, Sendable {
+    case exit
+    case signal
+    case timeout
 }
 
 public struct ProcessResult: Sendable {
@@ -20,6 +29,8 @@ public struct ProcessResult: Sendable {
     public var standardOutput: String
     public var standardError: String
     public var timedOut: Bool
+    public var terminationReason: ProcessTerminationReason
+    public var terminationSignal: Int32?
     public var standardOutputTruncated: Bool
     public var standardErrorTruncated: Bool
     public var standardOutputBytes: UInt64
@@ -30,6 +41,8 @@ public struct ProcessResult: Sendable {
         standardOutput: String,
         standardError: String,
         timedOut: Bool = false,
+        terminationReason: ProcessTerminationReason? = nil,
+        terminationSignal: Int32? = nil,
         standardOutputTruncated: Bool = false,
         standardErrorTruncated: Bool = false,
         standardOutputBytes: UInt64 = 0,
@@ -39,6 +52,9 @@ public struct ProcessResult: Sendable {
         self.standardOutput = standardOutput
         self.standardError = standardError
         self.timedOut = timedOut
+        self.terminationReason =
+            terminationReason ?? (timedOut ? .timeout : .exit)
+        self.terminationSignal = terminationSignal
         self.standardOutputTruncated = standardOutputTruncated
         self.standardErrorTruncated = standardErrorTruncated
         self.standardOutputBytes = standardOutputBytes
@@ -47,8 +63,8 @@ public struct ProcessResult: Sendable {
 }
 
 public struct ProcessRunner: Sendable {
-    private static let maximumCapturedBytes = 8 * 1_024 * 1_024
-    private static let capturedEdgeBytes = maximumCapturedBytes / 2
+    public static let defaultMaximumCapturedBytes = 8 * 1_024 * 1_024
+    private static let largestMaximumCapturedBytes = 64 * 1_024 * 1_024
     private static let terminationGracePeriod: TimeInterval = 2
 
     public init() {}
@@ -60,10 +76,16 @@ public struct ProcessRunner: Sendable {
         directory: URL? = nil,
         environment: [String: String]? = nil,
         inheritEnvironment: Bool = true,
-        timeout: TimeInterval = 300
+        timeout: TimeInterval = 300,
+        maximumCapturedBytes: Int = Self.defaultMaximumCapturedBytes
     ) throws -> ProcessResult {
         guard timeout > 0, timeout.isFinite else {
             throw ProcessRunnerError.invalidTimeout
+        }
+        guard maximumCapturedBytes > 0,
+            maximumCapturedBytes <= Self.largestMaximumCapturedBytes
+        else {
+            throw ProcessRunnerError.invalidOutputLimit
         }
 
         let process = Process()
@@ -103,13 +125,22 @@ public struct ProcessRunner: Sendable {
             let ownsProcessGroup = setpgid(pid, pid) == 0
             if completion.wait(timeout: .now() + timeout) == .timedOut {
                 timedOut = true
-                Self.signal(process: process, signal: SIGTERM, processGroup: ownsProcessGroup)
+                var descendants = Self.signalTree(
+                    process: process,
+                    signal: SIGTERM,
+                    processGroup: ownsProcessGroup
+                )
                 if completion.wait(timeout: .now() + Self.terminationGracePeriod) == .timedOut {
-                    Self.signal(process: process, signal: SIGKILL, processGroup: ownsProcessGroup)
+                    descendants += Self.signalTree(
+                        process: process,
+                        signal: SIGKILL,
+                        processGroup: ownsProcessGroup
+                    )
                     guard completion.wait(timeout: .now() + Self.terminationGracePeriod) == .success else {
                         throw ProcessRunnerError.couldNotTerminate(pid)
                     }
                 }
+                Self.finishDescendants(descendants)
             }
             try stdoutHandle.close()
             try stderrHandle.close()
@@ -119,8 +150,28 @@ public struct ProcessRunner: Sendable {
             throw error
         }
 
-        let stdout = (try? Self.readCapturedOutput(at: stdoutURL)) ?? .empty
-        let stderr = (try? Self.readCapturedOutput(at: stderrURL)) ?? .empty
+        let stdout =
+            (try? Self.readCapturedOutput(
+                at: stdoutURL,
+                maximumBytes: maximumCapturedBytes
+            )) ?? .empty
+        let stderr =
+            (try? Self.readCapturedOutput(
+                at: stderrURL,
+                maximumBytes: maximumCapturedBytes
+            )) ?? .empty
+        let reason: ProcessTerminationReason
+        let signal: Int32?
+        if timedOut {
+            reason = .timeout
+            signal = nil
+        } else if process.terminationReason == .uncaughtSignal {
+            reason = .signal
+            signal = process.terminationStatus
+        } else {
+            reason = .exit
+            signal = nil
+        }
         return ProcessResult(
             status: timedOut ? 124 : process.terminationStatus,
             standardOutput: String(decoding: stdout.data, as: UTF8.self)
@@ -128,6 +179,8 @@ public struct ProcessRunner: Sendable {
             standardError: String(decoding: stderr.data, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             timedOut: timedOut,
+            terminationReason: reason,
+            terminationSignal: signal,
             standardOutputTruncated: stdout.truncated,
             standardErrorTruncated: stderr.truncated,
             standardOutputBytes: stdout.totalBytes,
@@ -143,10 +196,13 @@ public struct ProcessRunner: Sendable {
         static let empty = CapturedOutput(data: Data(), truncated: false, totalBytes: 0)
     }
 
-    private static func readCapturedOutput(at url: URL) throws -> CapturedOutput {
+    private static func readCapturedOutput(
+        at url: URL,
+        maximumBytes: Int
+    ) throws -> CapturedOutput {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let byteCount = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-        guard byteCount > UInt64(maximumCapturedBytes) else {
+        guard byteCount > UInt64(maximumBytes) else {
             return CapturedOutput(
                 data: try Data(contentsOf: url, options: [.mappedIfSafe]),
                 truncated: false,
@@ -156,6 +212,7 @@ public struct ProcessRunner: Sendable {
 
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
+        let capturedEdgeBytes = max(1, maximumBytes / 2)
         let head = try handle.read(upToCount: capturedEdgeBytes) ?? Data()
         try handle.seek(toOffset: byteCount - UInt64(capturedEdgeBytes))
         let tail = try handle.read(upToCount: capturedEdgeBytes) ?? Data()
@@ -168,12 +225,71 @@ public struct ProcessRunner: Sendable {
         )
     }
 
-    private static func signal(process: Process, signal: Int32, processGroup: Bool) {
+    private static func signalTree(
+        process: Process,
+        signal: Int32,
+        processGroup: Bool
+    ) -> [pid_t] {
         let pid = process.processIdentifier
+        let descendants = descendantPIDs(of: pid)
+        for child in descendants.reversed() {
+            _ = kill(child, signal)
+        }
         if processGroup {
             _ = kill(-pid, signal)
         } else {
             _ = kill(pid, signal)
+        }
+        return descendants
+    }
+
+    private static func descendantPIDs(of root: pid_t) -> [pid_t] {
+        var result: [pid_t] = []
+        var pending = [root]
+        var seen = Set([root])
+        while let parent = pending.popLast() {
+            for child in directChildPIDs(of: parent)
+                where child > 0 && seen.insert(child).inserted
+            {
+                result.append(child)
+                pending.append(child)
+            }
+        }
+        return result
+    }
+
+    private static func directChildPIDs(of parent: pid_t) -> [pid_t] {
+        var capacity = 32
+        while capacity <= 4_096 {
+            var children = [pid_t](repeating: 0, count: capacity)
+            let count = children.withUnsafeMutableBytes {
+                proc_listchildpids(
+                    parent,
+                    $0.baseAddress,
+                    Int32($0.count)
+                )
+            }
+            guard count >= 0 else { return [] }
+            if count < capacity {
+                return Array(children.prefix(Int(count)))
+                    .filter { $0 > 0 }
+            }
+            capacity *= 2
+        }
+        return []
+    }
+
+    private static func finishDescendants(_ descendants: [pid_t]) {
+        let unique = Set(descendants)
+        guard !unique.isEmpty else { return }
+        let deadline = Date().addingTimeInterval(0.5)
+        while Date() < deadline {
+            let alive = unique.filter { kill($0, 0) == 0 || errno != ESRCH }
+            if alive.isEmpty { return }
+            usleep(10_000)
+        }
+        for pid in unique {
+            _ = kill(pid, SIGKILL)
         }
     }
 }

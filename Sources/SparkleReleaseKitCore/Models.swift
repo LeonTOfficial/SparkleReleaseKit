@@ -1,7 +1,11 @@
 import Foundation
 
+public enum SparkleReleaseKitVersion {
+    public static let current = "0.4.0"
+}
+
 public struct SparkleKitConfiguration: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 3
+    public static let currentSchemaVersion = 4
     public static let supportedSparkleVersion = "2.9.4"
     public static let schemaURL = "https://leontofficial.github.io/SparkleReleaseKit/schema/sparklekit.schema.json"
 
@@ -12,6 +16,8 @@ public struct SparkleKitConfiguration: Codable, Equatable, Sendable {
     public var github: GitHub
     public var updates: Updates
     public var distribution: Distribution
+    public var tools: Tools
+    public var management: Management
 
     public init(
         schema: String = Self.schemaURL,
@@ -20,7 +26,9 @@ public struct SparkleKitConfiguration: Codable, Equatable, Sendable {
         project: Project,
         github: GitHub,
         updates: Updates,
-        distribution: Distribution = .init()
+        distribution: Distribution = .init(),
+        tools: Tools = .init(),
+        management: Management = .init()
     ) {
         self.schema = schema
         self.schemaVersion = schemaVersion
@@ -29,11 +37,46 @@ public struct SparkleKitConfiguration: Codable, Equatable, Sendable {
         self.github = github
         self.updates = updates
         self.distribution = distribution
+        self.tools = tools
+        self.management = management
     }
 
     enum CodingKeys: String, CodingKey {
         case schema = "$schema"
-        case schemaVersion, app, project, github, updates, distribution
+        case schemaVersion, app, project, github, updates, distribution, tools, management
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try container.decode(String.self, forKey: .schema)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        app = try container.decode(App.self, forKey: .app)
+        project = try container.decode(Project.self, forKey: .project)
+        github = try container.decode(GitHub.self, forKey: .github)
+        updates = try container.decode(Updates.self, forKey: .updates)
+        distribution = try container.decode(Distribution.self, forKey: .distribution)
+        tools = try container.decodeIfPresent(Tools.self, forKey: .tools) ?? .init()
+        management =
+            try container.decodeIfPresent(Management.self, forKey: .management)
+            ?? .init(
+                generatedByVersion: "unknown",
+                lastAppliedMigration: nil,
+                knownTemplateVersion: nil,
+                managedFiles: []
+            )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schema, forKey: .schema)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(app, forKey: .app)
+        try container.encode(project, forKey: .project)
+        try container.encode(github, forKey: .github)
+        try container.encode(updates, forKey: .updates)
+        try container.encode(distribution, forKey: .distribution)
+        try container.encode(tools, forKey: .tools)
+        try container.encode(management, forKey: .management)
     }
 
     public struct App: Codable, Equatable, Sendable {
@@ -215,6 +258,51 @@ public struct SparkleKitConfiguration: Codable, Equatable, Sendable {
             try container.encode(allowAdHocSigning, forKey: .allowAdHocSigning)
             try container.encode(expectedArchitectures, forKey: .expectedArchitectures)
             try container.encodeIfPresent(expectedTeamIdentifier, forKey: .expectedTeamIdentifier)
+        }
+    }
+
+    public struct Tools: Codable, Equatable, Sendable {
+        public var generateAppcast: GenerateAppcastTrustConfiguration
+
+        public init(
+            generateAppcast: GenerateAppcastTrustConfiguration = .init()
+        ) {
+            self.generateAppcast = generateAppcast
+        }
+    }
+
+    public struct Management: Codable, Equatable, Sendable {
+        public var generatedByVersion: String
+        public var lastAppliedMigration: String?
+        public var knownTemplateVersion: Int?
+        public var managedFiles: [ManagedFile]
+
+        public init(
+            generatedByVersion: String = SparkleReleaseKitVersion.current,
+            lastAppliedMigration: String? = "schema-4-managed-files",
+            knownTemplateVersion: Int? = 1,
+            managedFiles: [ManagedFile] = []
+        ) {
+            self.generatedByVersion = generatedByVersion
+            self.lastAppliedMigration = lastAppliedMigration
+            self.knownTemplateVersion = knownTemplateVersion
+            self.managedFiles = managedFiles
+        }
+
+        public struct ManagedFile: Codable, Equatable, Sendable {
+            public var path: String
+            public var originalTemplateSHA256: String?
+            public var templateVersion: Int?
+
+            public init(
+                path: String,
+                originalTemplateSHA256: String? = nil,
+                templateVersion: Int? = nil
+            ) {
+                self.path = path
+                self.originalTemplateSHA256 = originalTemplateSHA256
+                self.templateVersion = templateVersion
+            }
         }
     }
 }
@@ -495,6 +583,8 @@ public struct ReleaseManifest: Codable, Equatable, Sendable {
     public var sparkleSignatureVerified: Bool
     public var unsignedOverrideUsed: Bool?
     public var appcast: String
+    public var generateAppcastSHA256: String?
+    public var generateAppcastSigningIdentifier: String?
 
     public init(
         releaseMode: ReleaseMode,
@@ -503,9 +593,10 @@ public struct ReleaseManifest: Codable, Equatable, Sendable {
         artifact: ReleaseArtifactSummary,
         sparkleSignatureVerified: Bool,
         unsignedOverrideUsed: Bool = false,
-        appcast: String
+        appcast: String,
+        generateAppcastTrust: GenerateAppcastTrustDecision? = nil
     ) {
-        schemaVersion = 2
+        schemaVersion = 3
         self.releaseMode = releaseMode
         appName = metadata.appName
         bundleIdentifier = metadata.bundleIdentifier
@@ -521,6 +612,8 @@ public struct ReleaseManifest: Codable, Equatable, Sendable {
         self.sparkleSignatureVerified = sparkleSignatureVerified
         self.unsignedOverrideUsed = unsignedOverrideUsed
         self.appcast = appcast
+        generateAppcastSHA256 = generateAppcastTrust?.sha256
+        generateAppcastSigningIdentifier = generateAppcastTrust?.signingIdentifier
     }
 }
 
@@ -533,6 +626,7 @@ public struct ReleasePreparationResult: Codable, Sendable {
     public var manifestURL: URL
     public var metadata: ReleaseMetadata
     public var diagnostics: [Diagnostic]
+    public var generateAppcastTrust: GenerateAppcastTrustDecision?
 
     public init(
         version: String,
@@ -542,7 +636,8 @@ public struct ReleasePreparationResult: Codable, Sendable {
         checksumURL: URL,
         manifestURL: URL,
         metadata: ReleaseMetadata,
-        diagnostics: [Diagnostic]
+        diagnostics: [Diagnostic],
+        generateAppcastTrust: GenerateAppcastTrustDecision? = nil
     ) {
         self.version = version
         self.outputDirectory = outputDirectory
@@ -552,5 +647,6 @@ public struct ReleasePreparationResult: Codable, Sendable {
         self.manifestURL = manifestURL
         self.metadata = metadata
         self.diagnostics = diagnostics
+        self.generateAppcastTrust = generateAppcastTrust
     }
 }

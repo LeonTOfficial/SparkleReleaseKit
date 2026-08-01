@@ -61,6 +61,11 @@ public struct ConfigurationStore: Sendable {
         var normalized = configuration
         normalized.schema = SparkleKitConfiguration.schemaURL
         normalized.schemaVersion = SparkleKitConfiguration.currentSchemaVersion
+        normalized.management.generatedByVersion = SparkleReleaseKitVersion.current
+        normalized.management.lastAppliedMigration =
+            normalized.management.lastAppliedMigration ?? "schema-4-managed-files"
+        normalized.management.knownTemplateVersion =
+            normalized.management.knownTemplateVersion ?? 1
         try validate(normalized, allowMissingPublicKey: allowMissingPublicKey)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -160,6 +165,8 @@ public struct ConfigurationStore: Sendable {
         } catch {
             throw ConfigurationError.invalid(error.localizedDescription)
         }
+        try validateGenerateAppcastTrust(configuration.tools.generateAppcast)
+        try validateManagement(configuration.management)
     }
 
     private func validateRawDocument(_ data: Data) throws {
@@ -167,7 +174,14 @@ public struct ConfigurationStore: Sendable {
         guard let root = object as? [String: Any] else {
             throw ConfigurationError.invalid("the root value must be an object")
         }
-        try requireOnly(root, keys: ["$schema", "schemaVersion", "app", "project", "github", "updates", "distribution"], path: "root")
+        try requireOnly(
+            root,
+            keys: [
+                "$schema", "schemaVersion", "app", "project", "github", "updates",
+                "distribution", "tools", "management",
+            ],
+            path: "root"
+        )
         try requireObject(
             root["app"],
             keys: ["name", "bundleIdentifier", "minimumMacOS", "style", "sandboxed"],
@@ -187,6 +201,13 @@ public struct ConfigurationStore: Sendable {
             path: "updates")
         guard let schemaVersion = (root["schemaVersion"] as? NSNumber)?.intValue else {
             throw ConfigurationError.invalid("schemaVersion must be an integer")
+        }
+        if schemaVersion < SparkleKitConfiguration.currentSchemaVersion,
+            root["tools"] != nil || root["management"] != nil
+        {
+            throw ConfigurationError.invalid(
+                "legacy configuration schemas cannot contain v4 tools or management fields"
+            )
         }
         switch schemaVersion {
         case 1:
@@ -215,6 +236,16 @@ public struct ConfigurationStore: Sendable {
                 ],
                 path: "distribution"
             )
+        case 3:
+            try requireObject(
+                root["distribution"],
+                keys: [
+                    "installer", "updateArchive", "releaseMode", "requireSparkleSignature",
+                    "requireDeveloperID", "requireNotarization", "allowAdHocSigning",
+                    "expectedArchitectures", "expectedTeamIdentifier",
+                ],
+                path: "distribution"
+            )
         case SparkleKitConfiguration.currentSchemaVersion:
             try requireObject(
                 root["distribution"],
@@ -225,6 +256,43 @@ public struct ConfigurationStore: Sendable {
                 ],
                 path: "distribution"
             )
+            try requireObject(
+                root["tools"],
+                keys: ["generateAppcast"],
+                path: "tools"
+            )
+            guard let tools = root["tools"] as? [String: Any] else {
+                throw ConfigurationError.invalid("tools must be an object")
+            }
+            try requireObject(
+                tools["generateAppcast"],
+                keys: [
+                    "requireValidSignature", "expectedSigningIdentifier",
+                    "expectedTeamIdentifier", "designatedRequirement", "allowedSHA256",
+                    "allowEnvironmentOverrideInCI",
+                ],
+                path: "tools.generateAppcast"
+            )
+            try requireObject(
+                root["management"],
+                keys: [
+                    "generatedByVersion", "lastAppliedMigration",
+                    "knownTemplateVersion", "managedFiles",
+                ],
+                path: "management"
+            )
+            guard let management = root["management"] as? [String: Any],
+                let managedFiles = management["managedFiles"] as? [Any]
+            else {
+                throw ConfigurationError.invalid("management.managedFiles must be an array")
+            }
+            for (index, entry) in managedFiles.enumerated() {
+                try requireObject(
+                    entry,
+                    keys: ["path", "originalTemplateSHA256", "templateVersion"],
+                    path: "management.managedFiles[\(index)]"
+                )
+            }
         default:
             throw ConfigurationError.unsupportedSchema(schemaVersion)
         }
@@ -293,5 +361,97 @@ public struct ConfigurationStore: Sendable {
 
     private func containsGitHubExpression(_ value: String) -> Bool {
         value.contains("${{")
+    }
+
+    private func validateGenerateAppcastTrust(
+        _ trust: GenerateAppcastTrustConfiguration
+    ) throws {
+        if !trust.requireValidSignature && trust.allowedSHA256.isEmpty {
+            throw ConfigurationError.invalid(
+                "tools.generateAppcast must require a valid signature unless a SHA-256 allowlist is configured"
+            )
+        }
+        if let identifier = trust.expectedSigningIdentifier {
+            guard !identifier.isEmpty,
+                identifier.utf8.count <= 255,
+                !containsControlCharacter(identifier)
+            else {
+                throw ConfigurationError.invalid(
+                    "tools.generateAppcast.expectedSigningIdentifier must be printable"
+                )
+            }
+        }
+        if let team = trust.expectedTeamIdentifier {
+            guard matches(team, #"^[A-Z0-9]{10}$"#) else {
+                throw ConfigurationError.invalid(
+                    "tools.generateAppcast.expectedTeamIdentifier must be a 10-character Apple Team ID"
+                )
+            }
+        }
+        if let requirement = trust.designatedRequirement {
+            guard !requirement.isEmpty,
+                requirement.utf8.count <= 4_096,
+                !containsControlCharacter(requirement)
+            else {
+                throw ConfigurationError.invalid(
+                    "tools.generateAppcast.designatedRequirement must contain 1 to 4096 printable bytes"
+                )
+            }
+        }
+        let hashes = trust.allowedSHA256.map { $0.lowercased() }
+        guard hashes.count <= 32,
+            hashes.allSatisfy({ matches($0, #"^[0-9a-f]{64}$"#) }),
+            Set(hashes).count == hashes.count
+        else {
+            throw ConfigurationError.invalid(
+                "tools.generateAppcast.allowedSHA256 must contain unique SHA-256 values"
+            )
+        }
+    }
+
+    private func validateManagement(
+        _ management: SparkleKitConfiguration.Management
+    ) throws {
+        guard management.generatedByVersion == "unknown"
+            || SemanticVersion(management.generatedByVersion) != nil
+        else {
+            throw ConfigurationError.invalid(
+                "management.generatedByVersion must be a semantic version"
+            )
+        }
+        if let migration = management.lastAppliedMigration {
+            guard matches(migration, #"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"#) else {
+                throw ConfigurationError.invalid(
+                    "management.lastAppliedMigration contains unsafe characters"
+                )
+            }
+        }
+        if let version = management.knownTemplateVersion {
+            guard version > 0 else {
+                throw ConfigurationError.invalid(
+                    "management.knownTemplateVersion must be positive"
+                )
+            }
+        }
+        let paths = management.managedFiles.map(\.path)
+        guard Set(paths).count == paths.count else {
+            throw ConfigurationError.invalid(
+                "management.managedFiles cannot contain duplicate paths"
+            )
+        }
+        for file in management.managedFiles {
+            let hashIsValid = file.originalTemplateSHA256.map {
+                matches($0.lowercased(), #"^[0-9a-f]{64}$"#)
+            } ?? true
+            guard isSafeRelativePath(file.path),
+                hashIsValid,
+                file.templateVersion.map({ $0 > 0 }) ?? true,
+                file.originalTemplateSHA256 != nil || file.templateVersion == nil
+            else {
+                throw ConfigurationError.invalid(
+                    "management.managedFiles contains an invalid path, hash, or template version"
+                )
+            }
+        }
     }
 }

@@ -248,6 +248,51 @@ struct IntegrationTests {
         #expect(try String(contentsOf: updater, encoding: .utf8).hasSuffix(customLine))
     }
 
+    @Test("Legacy path-only ownership never authorizes an overwrite")
+    func legacyOwnershipRequiresMigrationReview() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let configuration = fixtureConfiguration()
+        _ = try Integrator().integrate(
+            projectRoot: fixture,
+            configuration: configuration,
+            apply: true
+        )
+        let manifestURL = fixture.appendingPathComponent(
+            ".sparklekit/manifest.json"
+        )
+        var manifest = try #require(
+            JSONSerialization.jsonObject(
+                with: Data(contentsOf: manifestURL)
+            ) as? [String: Any]
+        )
+        let entries = try #require(
+            manifest["managedFiles"] as? [[String: Any]]
+        )
+        manifest["schemaVersion"] = 1
+        manifest["managedFiles"] = try entries.map {
+            try #require($0["path"] as? String)
+        }
+        try JSONSerialization.data(
+            withJSONObject: manifest,
+            options: [.prettyPrinted, .sortedKeys]
+        ).write(to: manifestURL, options: .atomic)
+        let updater = fixture.appendingPathComponent(
+            "SparkleReleaseKit/AppUpdater.swift"
+        )
+        let custom = Data("// manual legacy edit\n".utf8)
+        try custom.write(to: updater, options: .atomic)
+
+        #expect(throws: IntegrationError.self) {
+            try Integrator().integrate(
+                projectRoot: fixture,
+                configuration: configuration,
+                apply: false
+            )
+        }
+        #expect(try Data(contentsOf: updater) == custom)
+    }
+
     @Test("Refuses in-project symbolic links for managed writes")
     func rejectsInProjectWriteSymlink() throws {
         let fixture = try makeFixture()

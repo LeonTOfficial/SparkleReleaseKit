@@ -33,6 +33,14 @@ SparkleReleaseKit commands are intentionally non-destructive unless an explicit 
 | `sparklekit verify-update <archive> --appcast PATH --version BUILD` | Cryptographically verify one archive against its appcast EdDSA signature. | No. |
 | `sparklekit prepare-release <archive> --version X.Y.Z` | Verify and stage a release through Sparkle's official `generate_appcast`. | Yes, under `.sparklekit/releases/` or `--output`. |
 | `sparklekit publish preview [stage]` | Bind and inspect planned assets and permissions without network access. | No. |
+| `sparklekit update check` | Download and verify signed CLI release metadata. | No. |
+| `sparklekit update install` | Explicitly download, verify, and atomically activate a newer CLI. | Yes, only in the CLI installation directory. |
+| `sparklekit update rollback` | Verify and atomically restore the previous CLI installation. | Yes, only in the CLI installation directory. |
+| `sparklekit update verify-manifest` | Verify a local update manifest and detached signature. | No. |
+| `sparklekit config get update-check` | Read the optional background update-hint preference. | No. |
+| `sparklekit config set update-check true\|false` | Enable or disable bounded background update hints. | Only the user preference file. |
+| `sparklekit project upgrade [project]` | Preview schema and managed-template migration with conflicts and diffs. | No. |
+| `sparklekit project upgrade [project] --apply` | Apply a conflict-free migration with backup and rollback. | Yes. |
 | `sparklekit explain <diagnostic-id>` | Explain one stable diagnostic and its remediation. | No. |
 | `sparklekit version` | Print toolkit and supported Sparkle versions. | No. |
 
@@ -44,7 +52,35 @@ Passive repository inspection is the default. `--allow-project-execution` permit
 
 Toolkit-initiated package resolution is independent. Pass `--allow-network` only when Xcode must download packages. Once `--allow-project-execution` is granted, the selected project's own build scripts and package plug-ins are trusted executable code and may perform arbitrary I/O; `--allow-network` is not a sandbox for them. `quickstart`, `doctor`, `integrate`, `verify`, and `publish preview` do not initiate network access.
 
-`prepare-release` may execute only the explicitly selected official `generate_appcast` tool. If that executable is inside the target project, `--allow-project-execution` is also required.
+`prepare-release` may execute only an explicitly selected or deliberately
+configured `generate_appcast`. The trust policy resolves symlinks, requires a
+regular executable with trusted ownership and parent permissions, records path
+origin, performs strict code-signature inspection, and enforces configured
+identifier, Team ID, designated requirement, and SHA-256 rules. Explicit
+`--generate-appcast` wins over `SPARKLE_GENERATE_APPCAST`; CI rejects the
+environment override without opt-in. If the executable is inside the target
+project, `--allow-project-execution` is also required. The child receives a
+minimal environment rather than ambient tokens and credentials.
+
+## Self-update options
+
+- `--channel stable`: use the production signed channel. Beta remains reserved
+  for a future separately published source.
+- `--timeout SECONDS`: set a finite network timeout up to 300 seconds.
+- `--install-path PATH`: identify an installation not resolvable from `PATH`.
+- `--allow-downgrade`: permit an explicitly reviewed older signed release.
+- `--manifest PATH --signature PATH`: verify local release metadata without a
+  network request.
+
+`update check` never writes. `update install` never runs automatically and
+never changes app projects. See [CLI self-update](SELF_UPDATE.md).
+
+## Project migration
+
+`project upgrade` is preview-only by default. It exits with code 2 when a
+managed file conflicts with its recorded hash, emits stable JSON with
+`success: false`, and leaves every file untouched. `--apply` is transactional
+and idempotent. See [managed project migration](PROJECT_MIGRATION.md).
 
 ## Release policy options
 
@@ -60,7 +96,10 @@ Toolkit-initiated package resolution is independent. Pass `--allow-network` only
 
 ## JSON reports
 
-`quickstart`, `setup`, `integrate`, `doctor`, `test`, `verify`, `verify-update`, `validate-feed`, `prepare-release`, `publish preview`, and `explain` support the versioned JSON envelope where applicable. Each diagnostic contains:
+`quickstart`, `setup`, `integrate`, `doctor`, `test`, `verify`,
+`verify-update`, `validate-feed`, `prepare-release`, `publish preview`,
+`update`, `config`, `project upgrade`, and `explain` support the versioned JSON
+envelope where applicable. Each diagnostic contains:
 
 - `severity`: `pass`, `warning`, or `failure`
 - `id`: stable `SRK` identifier that can be passed to `sparklekit explain`
@@ -76,11 +115,11 @@ Automation must treat any `failure` as incomplete. Warnings remain visible becau
 | --- | --- |
 | `0` | Command completed successfully. |
 | `1` | Unexpected runtime or external-tool failure. |
-| `2` | One or more required diagnostics failed. |
+| `2` | Required diagnostics failed, no update is available for installation, or a migration has conflicts. |
 | `64` | Invalid command usage or missing input. |
 | `65` | Invalid configuration data. |
 | `66` | Project could not be found or detected. |
-| `78` | Integration state is unsafe or incomplete. |
+| `78` | Integration, trust, update, or installation state is unsafe or incomplete. |
 
 ## Completion boundary
 

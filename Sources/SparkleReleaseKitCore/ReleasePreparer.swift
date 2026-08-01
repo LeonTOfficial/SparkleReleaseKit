@@ -62,7 +62,9 @@ public struct ReleasePreparationOptions: Sendable {
     public var phasedRolloutInterval: Int?
     public var replaceExisting: Bool
     public var allowProjectExecution: Bool
+    public var allowGenerateAppcastEnvironmentInCI: Bool
     public var policyOverrides: ReleasePolicyOverrides
+    public var environment: [String: String]
 
     public init(
         version: String,
@@ -76,7 +78,9 @@ public struct ReleasePreparationOptions: Sendable {
         phasedRolloutInterval: Int? = nil,
         replaceExisting: Bool = false,
         allowProjectExecution: Bool = false,
-        policyOverrides: ReleasePolicyOverrides = .init()
+        allowGenerateAppcastEnvironmentInCI: Bool = false,
+        policyOverrides: ReleasePolicyOverrides = .init(),
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
         self.version = version
         self.archiveURL = archiveURL
@@ -89,7 +93,10 @@ public struct ReleasePreparationOptions: Sendable {
         self.phasedRolloutInterval = phasedRolloutInterval
         self.replaceExisting = replaceExisting
         self.allowProjectExecution = allowProjectExecution
+        self.allowGenerateAppcastEnvironmentInCI =
+            allowGenerateAppcastEnvironmentInCI
         self.policyOverrides = policyOverrides
+        self.environment = environment
     }
 }
 
@@ -128,11 +135,19 @@ public struct ReleasePreparer: Sendable {
             throw ReleasePreparationError.outputExists(finalDirectory)
         }
 
-        let tool = try resolveGenerateAppcast(
-            options.generateAppcastURL,
+        var generateAppcastConfiguration =
+            configuration.tools.generateAppcast
+        if options.allowGenerateAppcastEnvironmentInCI {
+            generateAppcastConfiguration.allowEnvironmentOverrideInCI = true
+        }
+        let generateAppcastTrust = try GenerateAppcastTrustPolicy().evaluate(
+            explicitURL: options.generateAppcastURL,
             projectRoot: root,
-            allowProjectExecution: options.allowProjectExecution
+            configuration: generateAppcastConfiguration,
+            allowProjectExecution: options.allowProjectExecution,
+            environment: options.environment
         )
+        let tool = URL(fileURLWithPath: generateAppcastTrust.canonicalPath)
         let transactionRoot = outputRoot.appendingPathComponent(".preparing-\(UUID().uuidString)")
         try fileManager.createDirectory(at: transactionRoot, withIntermediateDirectories: true)
         var shouldRemoveTransaction = true
@@ -196,7 +211,7 @@ public struct ReleasePreparer: Sendable {
             tool.path,
             arguments: arguments,
             directory: root,
-            environment: helperEnvironment(),
+            environment: helperEnvironment(options.environment),
             inheritEnvironment: false,
             timeout: 300
         )
@@ -253,7 +268,8 @@ public struct ReleasePreparer: Sendable {
             artifact: artifact,
             sparkleSignatureVerified: true,
             unsignedOverrideUsed: policy.allowUnsigned && artifact.signingKind == .unsigned,
-            appcast: appcast.lastPathComponent
+            appcast: appcast.lastPathComponent,
+            generateAppcastTrust: generateAppcastTrust
         )
         let manifestURL = transactionRoot.appendingPathComponent("release-manifest.json")
         let encoder = JSONEncoder()
@@ -291,7 +307,11 @@ public struct ReleasePreparer: Sendable {
             checksumURL: finalDirectory.appendingPathComponent(checksum.lastPathComponent),
             manifestURL: finalDirectory.appendingPathComponent(manifestURL.lastPathComponent),
             metadata: metadata,
-            diagnostics: inspection.diagnostics + appcastResult.diagnostics + [signatureDiagnostic]
+            diagnostics:
+                inspection.diagnostics + [
+                    generateAppcastDiagnostic(generateAppcastTrust)
+                ] + appcastResult.diagnostics + [signatureDiagnostic],
+            generateAppcastTrust: generateAppcastTrust
         )
     }
 
@@ -330,8 +350,7 @@ public struct ReleasePreparer: Sendable {
         }
     }
 
-    private func helperEnvironment() -> [String: String] {
-        let inherited = ProcessInfo.processInfo.environment
+    private func helperEnvironment(_ inherited: [String: String]) -> [String: String] {
         var environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
         for key in ["HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "LOGNAME"] {
             if let value = inherited[key], !value.isEmpty {
@@ -341,29 +360,22 @@ public struct ReleasePreparer: Sendable {
         return environment
     }
 
-    private func resolveGenerateAppcast(
-        _ explicit: URL?,
-        projectRoot: URL,
-        allowProjectExecution: Bool
-    ) throws -> URL {
-        guard let explicit else { throw ReleasePreparationError.missingGenerateAppcast }
-        let candidates = [
-            explicit.pathExtension.isEmpty
-                ? explicit.appendingPathComponent("generate_appcast")
-                : explicit,
-            explicit,
-        ]
-        for candidate in candidates.map({ $0.standardizedFileURL.resolvingSymlinksInPath() })
-        where fileManager.isExecutableFile(atPath: candidate.path) {
-            guard candidate.lastPathComponent == "generate_appcast" else {
-                throw ReleasePreparationError.invalidGenerateAppcast(candidate)
-            }
-            if ProjectPathResolver.contains(candidate, in: projectRoot), !allowProjectExecution {
-                throw ReleasePreparationError.projectGenerateAppcastRequiresPermission(candidate)
-            }
-            return candidate
-        }
-        throw ReleasePreparationError.missingGenerateAppcast
+    private func generateAppcastDiagnostic(
+        _ trust: GenerateAppcastTrustDecision
+    ) -> Diagnostic {
+        let identity = trust.signingIdentifier.map {
+            " signing identifier \($0),"
+        } ?? ""
+        return .init(
+            .pass,
+            "generate_appcast trust",
+            "Accepted \(trust.canonicalPath) from \(trust.source.rawValue);\(identity) SHA-256 \(trust.sha256).",
+            id: "SRK4401",
+            affectedComponent: trust.canonicalPath,
+            evidence: trust.signatureValid
+                ? "strict code signature valid"
+                : "accepted by configured SHA-256 allowlist"
+        )
     }
 
     private func validatedOutputRoot(_ explicit: URL?, projectRoot: URL) throws -> URL {

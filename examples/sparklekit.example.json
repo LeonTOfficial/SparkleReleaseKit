@@ -34,7 +34,23 @@
     "target": "My App",
     "template": "auto"
   },
-  "schemaVersion": 3,
+  "schemaVersion": 4,
+  "tools": {
+    "generateAppcast": {
+      "allowEnvironmentOverrideInCI": false,
+      "allowedSHA256": [],
+      "designatedRequirement": null,
+      "expectedSigningIdentifier": null,
+      "expectedTeamIdentifier": null,
+      "requireValidSignature": true
+    }
+  },
+  "management": {
+    "generatedByVersion": "0.4.0",
+    "knownTemplateVersion": 1,
+    "lastAppliedMigration": "schema-4-managed-files",
+    "managedFiles": []
+  },
   "updates": {
     "automaticChecks": true,
     "automaticDownloads": false,

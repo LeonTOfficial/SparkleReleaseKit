@@ -48,6 +48,7 @@ jobs:
           set -euo pipefail
           for script in sparklekit scripts/bootstrap.sh scripts/install.sh scripts/run-tests.sh; do zsh -n "$script"; done
           for script in scripts/check-site.sh scripts/test-cli.sh; do bash -n "$script"; done
+          swiftc -parse scripts/create-update-manifest.swift
           python3 -m py_compile scripts/check_site.py
           python3 scripts/test_check_site.py
           python3 -m json.tool examples/sparklekit.example.json > /dev/null

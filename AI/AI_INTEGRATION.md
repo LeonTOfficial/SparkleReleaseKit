@@ -37,6 +37,10 @@ Produce a buildable, secure Sparkle 2 integration while preserving the target re
 18. Run `sparklekit validate-feed <appcast.xml> --json` and `sparklekit verify-update`.
 19. Check the generated SHA-256 file and `release-manifest.json`.
 20. Test updating from an older real build to the new test build through an isolated test appcast.
+21. For an existing integration, run `sparklekit project upgrade --json`
+    before `--apply`; stop on every conflict and preserve manual edits.
+22. Treat `sparklekit update install` as a separate explicit CLI maintenance
+    action. It never updates the app or its Sparkle dependency.
 
 ## Non-interactive example
 

@@ -29,12 +29,15 @@ It does **not** replace or fork Sparkle. Sparkle remains the secure update engin
 - Protects private keys, certificates, backups, and release staging files.
 - Previews every integration change before writing anything.
 - Creates a timestamped backup and restores its own changes if integration fails.
+- Safely previews and migrates already integrated projects without overwriting manual edits.
 - Supports explicit `free`, `developer-id`, and capability-aware `auto` release modes.
 - Verifies ZIP and DMG archives, safe extraction paths, expansion limits, bundle metadata, CPU architectures, signing class, Team ID, Hardened Runtime, Gatekeeper, notarization staples, and embedded Sparkle.
 - Runs Xcode package resolution and a credential-free Release build with `sparklekit test --allow-project-execution`.
 - Validates appcast structure, credential-free HTTPS enclosure URLs, versions, lengths, and exact 64-byte Ed25519 signature fields.
 - Cryptographically verifies the Ed25519 signature against the exact staged archive, not merely its presence.
 - Stages a signed archive, SHA-256 checksum, deterministic release manifest, release notes, and appcast through `prepare-release`.
+- Verifies the exact identity, signature, ownership, permissions, canonical path, and optional SHA-256 allowlist of `generate_appcast`.
+- Checks, installs, and rolls back signed SparkleReleaseKit CLI updates without changing app projects.
 - Emits stable JSON from diagnostic commands so coding agents and CI can act on exact results.
 - Includes instructions designed for both people and coding agents.
 
@@ -49,7 +52,7 @@ Download the [latest tested macOS package](https://github.com/LeonTOfficial/Spar
 sparklekit version
 ```
 
-The release also contains a SHA-256 checksum and a GitHub artifact attestation. The packaged CLI is ad-hoc signed for structural integrity, but until it is Developer-ID signed and notarized, macOS may still quarantine a downloaded binary. The source-build route below is the most reliable fallback and creates the executable locally:
+The release also contains a SHA-256 checksum, signed self-update metadata, build metadata, and GitHub artifact attestations. Releases use an ad-hoc signed ZIP when protected Apple credentials are unavailable; the protected workflow additionally supports a Developer-ID signed, notarized, and stapled DMG. The source-build route below remains available:
 
 ```bash
 git clone https://github.com/LeonTOfficial/SparkleReleaseKit.git
@@ -121,6 +124,11 @@ sparklekit verify-update <archive> --appcast PATH --version BUILD [options]
 sparklekit validate-feed <appcast.xml> [--json]
 sparklekit prepare-release <archive> --version X.Y.Z [options]
 sparklekit publish preview [stage-path] [--project path] [--json]
+sparklekit update check [--json]
+sparklekit update install [--json]
+sparklekit update rollback [--json]
+sparklekit config set update-check false
+sparklekit project upgrade [project-path] [--apply] [--json]
 sparklekit explain <diagnostic-id> [--json]
 sparklekit version
 ```
@@ -134,6 +142,17 @@ Install the CLI from a source checkout for your user account:
 ```
 
 The default location is `~/.local/bin/sparklekit`; no administrator password is needed.
+
+## Four different updates
+
+These operations have separate trust boundaries:
+
+1. **App update:** Sparkle updates the macOS app that uses SparkleReleaseKit. Use `prepare-release`, `validate-feed`, and `verify-update`.
+2. **CLI update:** `sparklekit update check|install|rollback` updates only the installed SparkleReleaseKit executable and resource bundle from a signed release manifest.
+3. **Generated project-file update:** `sparklekit project upgrade` previews template and schema migrations; only `--apply` writes after conflict checks and a backup.
+4. **Sparkle dependency update:** change the official Sparkle Swift Package version in Xcode deliberately, then rebuild and rerun all app release checks. SparkleReleaseKit does not silently change it.
+
+The optional CLI update hint checks at most once per 24 hours, never installs automatically, sends no telemetry or personal data, and can be disabled with `sparklekit config set update-check false`.
 
 ## Prepare a release safely
 
@@ -167,7 +186,10 @@ The repository contains `AGENTS.md`, `llms.txt`, a JSON Schema, deterministic co
 ## Documentation
 
 - [Quick start](docs/QUICKSTART.md)
+- [Installation](docs/INSTALLATION.md)
 - [CLI reference](docs/CLI_REFERENCE.md)
+- [SparkleReleaseKit CLI updates](docs/SELF_UPDATE.md)
+- [Managed project migration](docs/PROJECT_MIGRATION.md)
 - [AppKit integration](docs/APPKIT.md)
 - [SwiftUI integration](docs/SWIFTUI.md)
 - [Release process](docs/RELEASE_PROCESS.md)
@@ -184,7 +206,7 @@ The repository contains `AGENTS.md`, `llms.txt`, a JSON Schema, deterministic co
 
 ## Current scope
 
-Version 0.2 focuses on regular macOS `.app` bundles built by Xcode and ZIP or DMG distribution through either a free/ad-hoc or optional Developer ID path. Package installers, external bundles, credential provisioning, and automatic Apple submissions remain outside the scope because those workflows require project-specific authorization.
+Version 0.4 focuses on regular macOS `.app` bundles built by Xcode and ZIP or DMG distribution through either a free/ad-hoc or optional Developer ID path. It adds secure CLI self-update, managed project migration, and a protected release workflow. SparkleReleaseKit still does not provision project-specific Apple credentials, silently publish app releases, or replace Sparkle itself.
 
 ## Credits
 

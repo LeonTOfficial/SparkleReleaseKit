@@ -36,3 +36,39 @@ Run `sparklekit verify` on the exact uploaded asset. Check code signing, bundle 
 ## CI cannot access the private key
 
 Do not put the key in the repository. Configure it as an encrypted repository or environment secret and make it available only to the release job. Pull-request jobs must not receive release secrets.
+
+## `generate_appcast` is rejected
+
+Use the exact official helper from the reviewed Sparkle release. Confirm its
+canonical path, owner, file and parent permissions, strict code signature,
+signing identifier, Team ID, designated requirement, and SHA-256 against
+`tools.generateAppcast`. An environment path is rejected in CI unless the
+override is explicitly allowed. Do not weaken the rule before identifying why
+the helper changed.
+
+## CLI update check cannot reach GitHub
+
+Normal commands continue even when an optional background hint fails. For an
+explicit diagnosis, run:
+
+```bash
+sparklekit update check --timeout 30
+```
+
+Confirm HTTPS access to the latest GitHub release assets. A signature error is
+not a network error; stop and inspect the release rather than bypassing it.
+
+## CLI update install fails
+
+Check that the installation directory is writable and that the executable and
+resource bundle are still present. Do not run the downloaded binary manually.
+The transaction leaves the current version active or restores it on failure.
+Use `sparklekit update rollback` only when a verified previous installation
+exists.
+
+## Project upgrade reports a conflict
+
+The managed file differs from its recorded original SHA-256 or lacks ownership
+evidence. Review the bounded diff, merge the new behavior manually or restore a
+trusted generated version, then preview again. Do not edit the manifest hash to
+silence the conflict.

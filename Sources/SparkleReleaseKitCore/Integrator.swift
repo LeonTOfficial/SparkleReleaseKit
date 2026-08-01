@@ -64,15 +64,11 @@ public struct Integrator {
         let lock = apply ? try acquireLock(root: root) : nil
         defer { releaseLock(lock) }
 
-        var desired: [String: Data] = [
-            ConfigurationStore.defaultFileName: try ConfigurationStore().encodedData(
-                configuration,
-                allowMissingPublicKey: allowConfigurationOnly
-            ),
-        ]
+        var normalizedConfiguration = configuration
+        var desired: [String: Data] = [:]
         var generatedPaths: Set<String> = []
         if hasPublicKey {
-            let renderer = TemplateRenderer(configuration: configuration)
+            let renderer = TemplateRenderer(configuration: normalizedConfiguration)
             desired["SparkleReleaseKit/AppUpdater.swift"] =
                 try renderer.render(named: "AppUpdater.swift.template")
             desired["SparkleReleaseKit/INTEGRATION.md"] =
@@ -87,17 +83,38 @@ public struct Integrator {
             generatedPaths = Set(desired.keys).subtracting([
                 ".gitignore", ConfigurationStore.defaultFileName,
             ])
-            desired[".sparklekit/manifest.json"] = try manifestData(
-                managedFiles: generatedPaths,
-                desired: desired,
-                configuration: configuration
-            )
             if let relativePlist = configuration.project.infoPlist {
                 desired[relativePlist] = try updatedInfoPlistData(
                     at: safeWriteURL(relativePlist, root: root),
-                    configuration: configuration
+                    configuration: normalizedConfiguration
                 )
             }
+        }
+        normalizedConfiguration.management = .init(
+            generatedByVersion: SparkleReleaseKitVersion.current,
+            lastAppliedMigration: "schema-4-managed-files",
+            knownTemplateVersion: 1,
+            managedFiles: desired.keys.sorted().map { path in
+                .init(
+                    path: path,
+                    originalTemplateSHA256: generatedPaths.contains(path)
+                        ? sha256(desired[path] ?? Data())
+                        : nil,
+                    templateVersion: generatedPaths.contains(path) ? 1 : nil
+                )
+            }
+        )
+        desired[ConfigurationStore.defaultFileName] =
+            try ConfigurationStore().encodedData(
+                normalizedConfiguration,
+                allowMissingPublicKey: allowConfigurationOnly
+            )
+        if hasPublicKey {
+            desired[".sparklekit/manifest.json"] = try manifestData(
+                managedFiles: generatedPaths,
+                desired: desired,
+                configuration: normalizedConfiguration
+            )
         }
         let ownership = try loadOwnership(root: root)
 
@@ -220,6 +237,9 @@ public struct Integrator {
 
         var schemaVersion: Int
         var sparkleVersion: String
+        var generatedByVersion: String
+        var lastAppliedMigration: String?
+        var knownTemplateVersion: Int?
         var managedFiles: [ManagedFile]
     }
 
@@ -235,13 +255,27 @@ public struct Integrator {
         var ownership = Ownership()
         for file in files {
             if let path = file as? String {
-                ownership.paths.insert(path)
+                _ = try safeWriteURL(path, root: root)
+                guard ownership.paths.insert(path).inserted else {
+                    throw ConfigurationError.invalid(
+                        ".sparklekit/manifest.json contains duplicate managed-file paths"
+                    )
+                }
             } else if let entry = file as? [String: Any],
                       let path = entry["path"] as? String,
-                      let hash = entry["sha256"] as? String
+                      let hash = entry["sha256"] as? String,
+                      hash.range(
+                        of: #"^[0-9a-fA-F]{64}$"#,
+                        options: .regularExpression
+                      ) != nil
             {
-                ownership.paths.insert(path)
-                ownership.hashes[path] = hash
+                _ = try safeWriteURL(path, root: root)
+                guard ownership.paths.insert(path).inserted else {
+                    throw ConfigurationError.invalid(
+                        ".sparklekit/manifest.json contains duplicate managed-file paths"
+                    )
+                }
+                ownership.hashes[path] = hash.lowercased()
             } else {
                 throw ConfigurationError.invalid(".sparklekit/manifest.json contains an invalid managed-file entry")
             }
@@ -257,8 +291,9 @@ public struct Integrator {
         guard ownership.paths.contains(path) else {
             throw IntegrationError.unmanagedFile(path)
         }
-        if let expectedHash = ownership.hashes[path],
-           sha256(existing) != expectedHash {
+        guard let expectedHash = ownership.hashes[path],
+            sha256(existing) == expectedHash
+        else {
             throw IntegrationError.managedFileModified(path)
         }
     }
@@ -273,8 +308,11 @@ public struct Integrator {
             return .init(path: path, sha256: sha256(data))
         }
         let manifest = Manifest(
-            schemaVersion: 2,
+            schemaVersion: 3,
             sparkleVersion: configuration.updates.sparkleVersion,
+            generatedByVersion: SparkleReleaseKitVersion.current,
+            lastAppliedMigration: configuration.management.lastAppliedMigration,
+            knownTemplateVersion: configuration.management.knownTemplateVersion,
             managedFiles: entries
         )
         let encoder = JSONEncoder()
