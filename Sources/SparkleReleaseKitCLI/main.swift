@@ -22,7 +22,21 @@ do {
         code = 66
     } else if error is UpdateSignatureVerificationError {
         code = 2
-    } else if error is IntegrationError || error is ReleasePreparationError || error is XcodeBuildValidationError {
+    } else if let updateError = error as? SelfUpdateError {
+        switch updateError {
+        case .networkFailure, .responseTooLarge, .timeout:
+            code = 1
+        case .noUpdateAvailable:
+            code = 2
+        default:
+            code = 78
+        }
+    } else if error is IntegrationError
+        || error is ReleasePreparationError
+        || error is GenerateAppcastTrustError
+        || error is UserConfigurationError
+        || error is XcodeBuildValidationError
+    {
         code = 78
     } else {
         code = 1

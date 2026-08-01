@@ -13,7 +13,16 @@ Run Sparkle's official `generate_keys` tool once. By default it stores the priva
 
 `sparklekit prepare-release` asks `generate_appcast` to read the private key from Keychain. It does not accept raw private key text in the configuration.
 
-Use only the official `generate_appcast` executable from a Sparkle release you have reviewed. SparkleReleaseKit deliberately does not execute a copy discovered inside the target project because that process receives Keychain access to the update-signing key.
+Use only the official `generate_appcast` executable from a Sparkle release you
+have reviewed. Record its exact SHA-256 and signing identity in
+`tools.generateAppcast` when practical. SparkleReleaseKit deliberately does not
+discover a copy from `PATH`; a copy inside the target project additionally
+requires explicit project-execution permission because that process receives
+Keychain access to the update-signing key.
+
+SparkleReleaseKit's own CLI update key is separate. Its private half is stored
+only in the protected GitHub `release` environment and is never needed on an
+app developer's Mac.
 
 ## CI
 

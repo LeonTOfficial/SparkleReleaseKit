@@ -83,6 +83,13 @@ public enum DiagnosticCatalog {
             recommendedAction: "Use the correct production key and regenerate the appcast from the unchanged archive.",
             documentationURL: documentationRoot + "UPDATE_SIGNING.md"
         ),
+        "SRK4401": .init(
+            id: "SRK4401",
+            title: "Untrusted generate_appcast helper",
+            explanation: "The selected signing helper did not satisfy the configured path, ownership, code-signature, or SHA-256 trust policy.",
+            recommendedAction: "Use the reviewed generate_appcast from the supported Sparkle release and configure an exact hash or signing requirement when stronger pinning is needed.",
+            documentationURL: documentationRoot + "SECURITY_MODEL.md"
+        ),
         "SRK5103": .init(
             id: "SRK5103",
             title: "Published archive checksum mismatch",
@@ -133,6 +140,7 @@ public enum DiagnosticCatalog {
         case "Main executable", "Bundle identifier", "Bundle metadata": return "SRK4308"
         case "Executable architectures": return "SRK4309"
         case "Sparkle framework": return "SRK4310"
+        case "generate_appcast trust": return "SRK4401"
         default:
             if title.hasPrefix("Item ") && title.hasSuffix(" download URL") { return "SRK4003" }
             if title.hasPrefix("Item ") && title.hasSuffix(" enclosure") { return "SRK4004" }

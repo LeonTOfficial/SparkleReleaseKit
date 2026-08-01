@@ -31,3 +31,63 @@ This is the production sequence for a regular macOS app bundle. Choose either [f
 Do not modify a signed appcast or signed release-notes file after generation; regenerate signatures after any content change.
 
 `prepare-release` validates that the app's `CFBundleShortVersionString` matches the requested version, checks archive paths and expansion limits, bundle identifier, architecture, app-signing policy, Gatekeeper status, and embedded Sparkle. It invokes Sparkle's official generator, independently verifies its Ed25519 signature against the exact archive, writes the checksum and manifest, and leaves publishing as a separate human-approved action.
+
+## Trust the selected generate_appcast
+
+Prefer an explicit path and pin the reviewed helper in `sparklekit.json`:
+
+```json
+{
+  "tools": {
+    "generateAppcast": {
+      "requireValidSignature": true,
+      "expectedSigningIdentifier": "generate_appcast-EXPECTED_IDENTIFIER",
+      "expectedTeamIdentifier": null,
+      "designatedRequirement": null,
+      "allowedSHA256": ["REVIEWED_64_CHARACTER_SHA256"],
+      "allowEnvironmentOverrideInCI": false
+    }
+  }
+}
+```
+
+The official Sparkle 2.9.4 binary is ad-hoc signed and may have no Team ID, so
+an exact SHA-256 allowlist is the strongest practical pin when that distributed
+binary is used. Recalculate and review the hash whenever Sparkle is upgraded.
+Do not weaken the policy merely to make an unfamiliar helper run.
+
+## Release SparkleReleaseKit itself
+
+SparkleReleaseKit's own tag workflow is separate from an app release:
+
+1. Update `SparkleReleaseKitVersion.current`, `CHANGELOG.md`, schemas, and docs.
+2. Run `scripts/run-tests.sh` and the universal release build locally.
+3. Merge the exact release commit to `main`.
+4. Create an annotated `vX.Y.Z` tag on that commit.
+5. The protected `release` environment supplies only the dedicated CLI update
+   manifest key and optional Apple release credentials.
+6. The workflow rebuilds and tests the tag, verifies tag ancestry and version,
+   signs the binary, and emits `sparklekit-build-metadata.json`.
+7. It packages and verifies the ZIP, checksum, universal architectures,
+   strict code signature, installer, and CLI version.
+8. It creates `sparklekit-update-manifest.json` and its detached Ed25519
+   signature, then verifies them with the same embedded trust root used by
+   `sparklekit update`.
+9. With complete Apple credentials it also creates a Developer-ID signed,
+   notarized, stapled, and Gatekeeper-assessed DMG. Missing Apple credentials
+   never affect pull-request CI.
+10. It creates GitHub provenance attestations before publishing every asset.
+
+The release must include:
+
+- `SparkleReleaseKit-macos.zip`;
+- `SparkleReleaseKit-macos.zip.sha256`;
+- `sparklekit-update-manifest.json`;
+- `sparklekit-update-manifest.json.sig`;
+- `sparklekit-build-metadata.json`; and
+- the optional DMG and checksum when Apple verification was completed.
+
+After publication, download the public assets into a fresh temporary directory,
+verify checksum and attestation, inspect the universal binary and code
+signature, run the packaged installer, verify `sparklekit version`, and run
+`sparklekit update check`.

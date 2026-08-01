@@ -7,6 +7,8 @@ Primary documentation:
 - AI integration: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/AI/AI_INTEGRATION.md
 - Security model: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/SECURITY_MODEL.md
 - CLI reference: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/CLI_REFERENCE.md
+- CLI self-update: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/SELF_UPDATE.md
+- Managed project migration: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/PROJECT_MIGRATION.md
 - Free distribution: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/FREE_DISTRIBUTION.md
 - Developer ID distribution: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/DEVELOPER_ID_DISTRIBUTION.md
 - Update signing: https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/docs/UPDATE_SIGNING.md
@@ -24,6 +26,8 @@ Agent workflow:
 8. Run `sparklekit doctor`, build in Release, and verify a real archive using the selected mode.
 9. After explicit target-project execution approval, use `sparklekit test --allow-project-execution --json`, `sparklekit validate-feed --json`, and `sparklekit verify-update` for deterministic completion evidence.
 10. Prepare release staging with `sparklekit prepare-release`; private signing keys remain in Keychain or protected CI secrets.
+11. For existing integrations, preview `sparklekit project upgrade --json`; never apply across a conflict.
+12. Treat CLI self-update, generated project migration, app update delivery, and Sparkle dependency upgrades as four separate operations.
 
 Never expose or commit private update-signing keys, Apple certificates, App Store Connect keys, passwords, or tokens.
 Never equate Developer ID or notarization with Sparkle EdDSA update signing. A paid Apple membership is optional; Sparkle EdDSA is not.

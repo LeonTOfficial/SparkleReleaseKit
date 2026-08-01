@@ -158,6 +158,24 @@ sparklekit quickstart "/workspace/MyApp" \
 
 Set [`NO_COLOR`](https://no-color.org/) to disable color capability. Plain logs never contain spinner control characters.
 
+## Keep the toolkit and generated files current
+
+These are separate opt-in operations:
+
+```bash
+sparklekit update check
+sparklekit update install
+sparklekit project upgrade "/path/to/YourApp"
+sparklekit project upgrade "/path/to/YourApp" --apply
+```
+
+The first pair updates only the installed SparkleReleaseKit CLI from signed
+release metadata. The second pair previews and then transactionally updates
+only files managed inside the app project. Neither operation changes the
+Sparkle Swift Package dependency automatically. See
+[CLI self-update](SELF_UPDATE.md) and
+[managed project migration](PROJECT_MIGRATION.md).
+
 ## Verify
 
 After the two Xcode steps:

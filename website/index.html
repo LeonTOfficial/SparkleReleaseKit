@@ -38,7 +38,7 @@
       <div class="hero-content">
         <div class="eyebrow">SparkleReleaseKit · Sparkle 2.9.4 · Swift 6</div>
         <h1>Secure update delivery for macOS.</h1>
-        <p class="lead">Turn an existing Xcode app into a verifiable Sparkle release workflow. Detect the project, generate the integration, keep private keys private, and prove the archive users will install.</p>
+        <p class="lead">Turn an existing Xcode app into a verifiable Sparkle release workflow. Detect the project, generate and safely migrate the integration, keep private keys private, and prove the archive users will install.</p>
         <div class="actions">
           <a class="button primary" href="docs/">Set up your first app</a>
           <a class="button" href="https://github.com/LeonTOfficial/SparkleReleaseKit/releases/latest/download/SparkleReleaseKit-macos.zip">Download the CLI</a>
@@ -47,7 +47,7 @@
         <div class="proof">
           <span><strong>Preview before apply</strong><br>Every generated path stays reviewable.</span>
           <span><strong>Secrets stay outside</strong><br>Project configuration remains public.</span>
-          <span><strong>Verify exact bytes</strong><br>Archive, feed, signature, and manifest.</span>
+          <span><strong>Verify exact bytes</strong><br>Archive, feed, helper trust, and signed manifests.</span>
         </div>
       </div>
     </section>
@@ -62,7 +62,7 @@
         <div class="grid three">
           <article class="card" data-reveal><div class="icon">01</div><h3>Detect</h3><p>Find the project, app style, shared scheme, bundle identifier, plist, and GitHub remote.</p></article>
           <article class="card" data-reveal><div class="icon">02</div><h3>Integrate</h3><p>Generate the updater, secure metadata, CI checks, release notes, backup, and project-specific guide.</p></article>
-          <article class="card" data-reveal><div class="icon">03</div><h3>Prove</h3><p>Build the real scheme, inspect release archives, verify the EdDSA signature, and produce structured evidence.</p></article>
+          <article class="card" data-reveal><div class="icon">03</div><h3>Prove and maintain</h3><p>Verify the archive and EdDSA signature, migrate managed files safely, and update the CLI through separately signed metadata.</p></article>
         </div>
       </div>
     </section>
@@ -112,6 +112,8 @@ Guided Sparkle setup
 No files were changed.</span></pre>
           <pre class="terminal-followup"><span class="prompt">$</span> <span class="command">sparklekit doctor ~/Projects/MyApp --json</span>
 <span class="result">{ "success": true, "diagnostics": [...] }</span></pre>
+          <pre class="terminal-followup"><span class="prompt">$</span> <span class="command">sparklekit project upgrade ~/Projects/MyApp</span>
+<span class="result">Preview only. Manual edits are preserved.</span></pre>
         </div>
       </div>
     </section>
@@ -132,7 +134,7 @@ No files were changed.</span></pre>
     <section class="band">
       <div class="section grid two">
         <div data-reveal><div class="eyebrow">Built for coding agents</div><h2>A protocol, not a vague prompt.</h2><p class="muted">`AGENTS.md`, `llms.txt`, JSON Schema, exact commands, safety boundaries, expected files, and a completion report let an AI integrate the toolkit without guessing your release security.</p><a class="button" href="https://github.com/LeonTOfficial/SparkleReleaseKit/blob/main/AI/AI_INTEGRATION.md">Read the AI protocol</a></div>
-        <div data-reveal><div class="eyebrow">Security boundary</div><h2>Signing secrets never belong in project configuration.</h2><p class="muted">The toolkit separates public metadata from private signing material, rejects suspicious configuration, minimizes workflow permissions, and verifies the artifact users will actually install.</p><a class="button" href="security/">Read the security model</a></div>
+        <div data-reveal><div class="eyebrow">Security boundary</div><h2>Signing secrets never belong in project configuration.</h2><p class="muted">The toolkit separates app keys from its CLI update trust root, verifies the selected Sparkle helper, minimizes workflow permissions, and verifies the artifact users will actually install.</p><a class="button" href="security/">Read the security model</a></div>
       </div>
     </section>
   </main>

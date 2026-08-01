@@ -18,7 +18,8 @@ struct ReleaseWorkflowTests {
             archive: fixture.archive,
             signingKey: signingKey
         )
-        let configuration = fixtureConfiguration(
+        let configuration = try configurationTrusting(
+            tool,
             publicKey: signingKey.publicKey.rawRepresentation.base64EncodedString()
         )
 
@@ -60,7 +61,8 @@ struct ReleaseWorkflowTests {
             archive: fixture.archive,
             signingKey: signingKey
         )
-        let configuration = fixtureConfiguration(
+        let configuration = try configurationTrusting(
+            tool,
             publicKey: signingKey.publicKey.rawRepresentation.base64EncodedString()
         )
         let prepared = try ReleasePreparer().prepare(
@@ -105,12 +107,22 @@ struct ReleaseWorkflowTests {
     func rejectsVersionMismatch() throws {
         let fixture = try makeSignedArchive()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let tool = try makeFakeGenerateAppcast(
+            in: fixture.root,
+            archive: fixture.archive,
+            signingKey: .init()
+        )
 
         #expect(throws: ReleasePreparationError.self) {
             try ReleasePreparer().prepare(
                 projectRoot: fixture.root,
-                configuration: fixtureConfiguration(),
-                options: .init(version: "1.3.0", archiveURL: fixture.archive)
+                configuration: try configurationTrusting(tool),
+                options: .init(
+                    version: "1.3.0",
+                    archiveURL: fixture.archive,
+                    generateAppcastURL: tool,
+                    allowProjectExecution: true
+                )
             )
         }
     }
@@ -273,7 +285,7 @@ struct ReleaseWorkflowTests {
         try "#!/bin/sh\nexit 0\n".write(to: tool, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
 
-        #expect(throws: ReleasePreparationError.self) {
+        #expect(throws: GenerateAppcastTrustError.self) {
             try ReleasePreparer().prepare(
                 projectRoot: fixture.root,
                 configuration: fixtureConfiguration(),
@@ -407,9 +419,315 @@ struct ReleaseWorkflowTests {
             })
     }
 
+    @Test(
+        "Runs the complete secure maintenance lifecycle on a minimal app",
+        .timeLimit(.minutes(1))
+    )
+    func secureMaintenanceEndToEnd() throws {
+        let oldApp = try makeSignedArchive(
+            shortVersion: "1.1.0",
+            buildVersion: "110"
+        )
+        let newApp = try makeSignedArchive()
+        defer {
+            try? FileManager.default.removeItem(at: oldApp.root)
+            try? FileManager.default.removeItem(at: newApp.root)
+        }
+        let signingKey = Curve25519.Signing.PrivateKey()
+        let tool = try makeFakeGenerateAppcast(
+            in: newApp.root,
+            archive: newApp.archive,
+            signingKey: signingKey
+        )
+        let configuration = try configurationTrusting(
+            tool,
+            publicKey:
+                signingKey.publicKey.rawRepresentation.base64EncodedString()
+        )
+
+        let oldInspection = try ReleaseVerifier().inspect(
+            archiveURL: oldApp.archive,
+            expectedBundleIdentifier: configuration.app.bundleIdentifier
+        )
+        let newInspection = try ReleaseVerifier().inspect(
+            archiveURL: newApp.archive,
+            expectedBundleIdentifier: configuration.app.bundleIdentifier
+        )
+        #expect(oldInspection.metadata?.shortVersion == "1.1.0")
+        #expect(newInspection.metadata?.shortVersion == "1.2.0")
+        #expect(
+            !newInspection.diagnostics.contains {
+                $0.severity == .failure
+            }
+        )
+
+        let interruptedTool = newApp.root.appendingPathComponent(
+            "Interrupted/generate_appcast"
+        )
+        try FileManager.default.createDirectory(
+            at: interruptedTool.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "#!/bin/sh\nexit 73\n".write(
+            to: interruptedTool,
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: interruptedTool.path
+        )
+        var interruptedConfiguration = configuration
+        interruptedConfiguration.tools.generateAppcast.allowedSHA256 = [
+            try FileDigest.sha256(of: interruptedTool)
+        ]
+        let interruptedOutput = newApp.root.appendingPathComponent(
+            "Interrupted Release"
+        )
+        #expect(throws: ReleasePreparationError.self) {
+            try ReleasePreparer().prepare(
+                projectRoot: newApp.root,
+                configuration: interruptedConfiguration,
+                options: .init(
+                    version: "1.2.0",
+                    archiveURL: newApp.archive,
+                    outputRootURL: interruptedOutput,
+                    generateAppcastURL: interruptedTool,
+                    allowProjectExecution: true
+                )
+            )
+        }
+        let interruptedContents =
+            (try? FileManager.default.contentsOfDirectory(
+                atPath: interruptedOutput.path
+            )) ?? []
+        #expect(
+            !interruptedContents.contains {
+                $0.hasPrefix(".preparing-")
+            }
+        )
+
+        let prepared = try ReleasePreparer().prepare(
+            projectRoot: newApp.root,
+            configuration: configuration,
+            options: .init(
+                version: "1.2.0",
+                archiveURL: newApp.archive,
+                generateAppcastURL: tool,
+                allowProjectExecution: true
+            )
+        )
+        let appcast = try AppcastValidator().validate(
+            fileURL: prepared.appcastURL
+        )
+        let signature = try UpdateSignatureVerifier().verify(
+            archiveURL: prepared.archiveURL,
+            appcast: appcast,
+            publicEDKey: configuration.updates.publicEDKey,
+            expectedBuildVersion: "120"
+        )
+        #expect(signature.severity == .pass)
+
+        let invalidAppcastURL = newApp.root.appendingPathComponent(
+            "invalid-appcast.xml"
+        )
+        var invalidAppcast = try String(
+            contentsOf: prepared.appcastURL,
+            encoding: .utf8
+        )
+        let validSignature = try #require(
+            appcast.enclosures.first?.signature
+        )
+        invalidAppcast = invalidAppcast.replacingOccurrences(
+            of: validSignature,
+            with: Data(repeating: 4, count: 64).base64EncodedString()
+        )
+        try invalidAppcast.write(
+            to: invalidAppcastURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        let structurallyValidButWrong = try AppcastValidator().validate(
+            fileURL: invalidAppcastURL
+        )
+        #expect(throws: UpdateSignatureVerificationError.invalidSignature) {
+            try UpdateSignatureVerifier().verify(
+                archiveURL: prepared.archiveURL,
+                appcast: structurallyValidButWrong,
+                publicEDKey: configuration.updates.publicEDKey,
+                expectedBuildVersion: "120"
+            )
+        }
+
+        let tampered = newApp.root.appendingPathComponent("tampered.zip")
+        try FileManager.default.copyItem(
+            at: prepared.archiveURL,
+            to: tampered
+        )
+        let tamperedHandle = try FileHandle(forWritingTo: tampered)
+        try tamperedHandle.seekToEnd()
+        try tamperedHandle.write(contentsOf: Data([0x41]))
+        try tamperedHandle.close()
+        var tamperedAppcast = appcast
+        tamperedAppcast.enclosures[0].url =
+            "https://example.test/\(tampered.lastPathComponent)"
+        #expect(throws: UpdateSignatureVerificationError.self) {
+            try UpdateSignatureVerifier().verify(
+                archiveURL: tampered,
+                appcast: tamperedAppcast,
+                publicEDKey: configuration.updates.publicEDKey,
+                expectedBuildVersion: "120"
+            )
+        }
+
+        let wrongBundle = try ReleaseVerifier().inspect(
+            archiveURL: newApp.archive,
+            expectedBundleIdentifier: "com.example.wrong"
+        )
+        #expect(
+            wrongBundle.diagnostics.contains {
+                $0.severity == .failure
+                    && $0.title == "Bundle identifier"
+            }
+        )
+        #expect(throws: ReleasePreparationError.self) {
+            try ReleasePreparer().prepare(
+                projectRoot: newApp.root,
+                configuration: configuration,
+                options: .init(
+                    version: "1.3.0",
+                    archiveURL: newApp.archive,
+                    generateAppcastURL: tool,
+                    allowProjectExecution: true
+                )
+            )
+        }
+
+        let freeResult = try ReleaseVerifier().inspect(
+            archiveURL: newApp.archive,
+            expectedBundleIdentifier: configuration.app.bundleIdentifier,
+            policy: .free
+        )
+        let developerResult = try ReleaseVerifier().inspect(
+            archiveURL: newApp.archive,
+            expectedBundleIdentifier: configuration.app.bundleIdentifier,
+            policy: try ReleaseVerificationPolicy(
+                distribution: .init(
+                    releaseMode: .developerID,
+                    expectedArchitectures: []
+                )
+            )
+        )
+        #expect(
+            !freeResult.diagnostics.contains {
+                $0.severity == .failure
+            }
+        )
+        #expect(
+            developerResult.diagnostics.contains {
+                $0.severity == .failure
+                    && $0.title == "Developer ID requirement"
+            }
+        )
+
+        let projectInfo = newApp.root.appendingPathComponent(
+            "Example App/Info.plist"
+        )
+        try FileManager.default.createDirectory(
+            at: projectInfo.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.copyItem(
+            at: newApp.root.appendingPathComponent(
+                "build/Example App.app/Contents/Info.plist"
+            ),
+            to: projectInfo
+        )
+        _ = try Integrator().integrate(
+            projectRoot: newApp.root,
+            configuration: configuration,
+            apply: true
+        )
+        let managedNotes = newApp.root.appendingPathComponent(
+            "release-notes/next.md"
+        )
+        try FileManager.default.removeItem(at: managedNotes)
+        let migration = try ProjectUpgrader().upgrade(
+            projectRoot: newApp.root,
+            apply: true
+        )
+        #expect(migration.applied)
+        #expect(FileManager.default.fileExists(atPath: managedNotes.path))
+
+        let toolInstall = newApp.root.appendingPathComponent(
+            "Self Update/bin"
+        )
+        let package = newApp.root.appendingPathComponent(
+            "Self Update/package"
+        )
+        try FileManager.default.createDirectory(
+            at: toolInstall,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: package,
+            withIntermediateDirectories: true
+        )
+        let installedCLI = toolInstall.appendingPathComponent("sparklekit")
+        let packageCLI = package.appendingPathComponent("sparklekit")
+        try FileManager.default.copyItem(
+            at: URL(fileURLWithPath: "/usr/bin/false"),
+            to: installedCLI
+        )
+        try FileManager.default.copyItem(
+            at: URL(fileURLWithPath: "/usr/bin/true"),
+            to: packageCLI
+        )
+        let bundleName = SelfUpdateInstaller.resourceBundleName
+        let installedBundle = toolInstall.appendingPathComponent(bundleName)
+        let packageBundle = package.appendingPathComponent(bundleName)
+        try FileManager.default.createDirectory(
+            at: installedBundle,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: packageBundle,
+            withIntermediateDirectories: true
+        )
+        try Data("old".utf8).write(
+            to: installedBundle.appendingPathComponent("fixture")
+        )
+        try Data("new".utf8).write(
+            to: packageBundle.appendingPathComponent("fixture")
+        )
+        let originalCLIDigest = try FileDigest.sha256(of: installedCLI)
+        let updateResult = try SelfUpdateInstaller().install(
+            packageExecutable: packageCLI,
+            packageResourceBundle: packageBundle,
+            newVersion: "0.4.1",
+            installedVersion: "0.4.0",
+            installationPath: installedCLI
+        )
+        #expect(updateResult.installedVersion == "0.4.1")
+        let rollback = try SelfUpdateInstaller().rollback(
+            installationPath: installedCLI
+        )
+        let restoredTarget = try FileManager.default
+            .destinationOfSymbolicLink(atPath: installedCLI.path)
+        let restoredURL = URL(
+            fileURLWithPath: restoredTarget,
+            relativeTo: installedCLI.deletingLastPathComponent()
+        ).standardizedFileURL
+        #expect(rollback.restoredVersion == "0.4.0")
+        #expect(try FileDigest.sha256(of: restoredURL) == originalCLIDigest)
+        #expect(SemanticVersion("0.3.9")! < SemanticVersion("0.4.0")!)
+    }
+
     private func makeSignedArchive(
         hardenedRuntime: Bool = false,
-        signApp: Bool = true
+        signApp: Bool = true,
+        shortVersion: String = "1.2.0",
+        buildVersion: String = "120"
     ) throws -> (root: URL, archive: URL) {
         let manager = FileManager.default
         let root = manager.temporaryDirectory.appendingPathComponent("SparkleRelease-\(UUID().uuidString)")
@@ -425,8 +743,8 @@ struct ReleaseWorkflowTests {
             "CFBundleIdentifier": "com.example.app",
             "CFBundleName": "Example App",
             "CFBundlePackageType": "APPL",
-            "CFBundleShortVersionString": "1.2.0",
-            "CFBundleVersion": "120",
+            "CFBundleShortVersionString": shortVersion,
+            "CFBundleVersion": buildVersion,
         ]
         let plistData = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try plistData.write(to: app.appendingPathComponent("Contents/Info.plist"))
@@ -479,7 +797,9 @@ struct ReleaseWorkflowTests {
             )
         }
 
-        let archive = root.appendingPathComponent("Example.App.1.2.0.zip")
+        let archive = root.appendingPathComponent(
+            "Example.App.\(shortVersion).zip"
+        )
         let zip = try ProcessRunner().run("/usr/bin/ditto", arguments: ["-c", "-k", "--keepParent", app.path, archive.path])
         try #require(zip.status == 0, Comment(rawValue: zip.standardError))
         return (root, archive)
@@ -517,5 +837,17 @@ struct ReleaseWorkflowTests {
         try script.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         return url
+    }
+
+    private func configurationTrusting(
+        _ tool: URL,
+        publicKey: String = Data(repeating: 7, count: 32).base64EncodedString()
+    ) throws -> SparkleKitConfiguration {
+        var configuration = fixtureConfiguration(publicKey: publicKey)
+        configuration.tools.generateAppcast = .init(
+            requireValidSignature: false,
+            allowedSHA256: [try FileDigest.sha256(of: tool)]
+        )
+        return configuration
     }
 }

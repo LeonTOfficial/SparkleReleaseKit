@@ -21,6 +21,17 @@ Generate the key once with Sparkle's official `generate_keys` tool. Keep the pri
 - 64-byte signature encoding;
 - the real Ed25519 signature against the exact archive bytes.
 
+Before execution, `GenerateAppcastTrustPolicy` canonicalizes the helper path,
+checks ownership and write permissions for the file and its parents, requires a
+regular executable, verifies its strict code signature when configured, and
+enforces optional signing-identifier, Team-ID, designated-requirement, and
+SHA-256 allowlist constraints. The helper receives a minimal environment so
+unrelated CI and cloud credentials are not inherited.
+
+This app-update key is unrelated to the dedicated manifest key used by
+`sparklekit update`. Compromise or rotation of one trust root must not silently
+replace the other.
+
 You can repeat the cryptographic check independently:
 
 ```bash

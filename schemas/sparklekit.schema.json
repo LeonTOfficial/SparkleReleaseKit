@@ -5,10 +5,10 @@
   "description": "Public, non-secret configuration for a macOS Sparkle update workflow.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["$schema", "schemaVersion", "app", "project", "github", "updates", "distribution"],
+  "required": ["$schema", "schemaVersion", "app", "project", "github", "updates", "distribution", "tools", "management"],
   "properties": {
     "$schema": { "const": "https://leontofficial.github.io/SparkleReleaseKit/schema/sparklekit.schema.json" },
-    "schemaVersion": { "const": 3 },
+    "schemaVersion": { "const": 4 },
     "app": {
       "type": "object",
       "additionalProperties": false,
@@ -171,6 +171,139 @@
           "then": { "properties": { "requireDeveloperID": { "const": true } } }
         }
       ]
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generateAppcast"],
+      "properties": {
+        "generateAppcast": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "requireValidSignature",
+            "expectedSigningIdentifier",
+            "expectedTeamIdentifier",
+            "designatedRequirement",
+            "allowedSHA256",
+            "allowEnvironmentOverrideInCI"
+          ],
+          "properties": {
+            "requireValidSignature": { "type": "boolean" },
+            "expectedSigningIdentifier": {
+              "anyOf": [
+                { "type": "null" },
+                { "type": "string", "minLength": 1, "maxLength": 255 }
+              ]
+            },
+            "expectedTeamIdentifier": {
+              "anyOf": [
+                { "type": "null" },
+                { "type": "string", "pattern": "^[A-Z0-9]{10}$" }
+              ]
+            },
+            "designatedRequirement": {
+              "anyOf": [
+                { "type": "null" },
+                { "type": "string", "minLength": 1, "maxLength": 4096 }
+              ]
+            },
+            "allowedSHA256": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "allowEnvironmentOverrideInCI": { "type": "boolean" }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "requireValidSignature": { "const": false }
+                }
+              },
+              "then": {
+                "properties": {
+                  "allowedSHA256": { "minItems": 1 }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "management": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generatedByVersion",
+        "lastAppliedMigration",
+        "knownTemplateVersion",
+        "managedFiles"
+      ],
+      "properties": {
+        "generatedByVersion": {
+          "type": "string",
+          "pattern": "^(unknown|(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?)$"
+        },
+        "lastAppliedMigration": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+            }
+          ]
+        },
+        "knownTemplateVersion": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "integer", "minimum": 1 }
+          ]
+        },
+        "managedFiles": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "originalTemplateSHA256",
+              "templateVersion"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "not": {
+                  "pattern": "^/|(^|/)\\.\\.?(/|$)|//|\\\\"
+                }
+              },
+              "originalTemplateSHA256": {
+                "anyOf": [
+                  { "type": "null" },
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                ]
+              },
+              "templateVersion": {
+                "anyOf": [
+                  { "type": "null" },
+                  { "type": "integer", "minimum": 1 }
+                ]
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

@@ -19,6 +19,7 @@ For a new chat or coding-agent session, read `AI/PROJECT_HANDOFF.md` first. It r
 9. Run `sparklekit doctor --json`, `sparklekit test --json`, and the target's own tests.
 10. Verify a real archive with `sparklekit verify --json` before claiming completion.
 11. Validate the generated appcast with `sparklekit validate-feed --json`.
+12. For an existing integration, preview `sparklekit project upgrade --json`; preserve manual edits and apply only a conflict-free plan.
 
 ## Editing boundaries
 
@@ -29,6 +30,7 @@ For a new chat or coding-agent session, read `AI/PROJECT_HANDOFF.md` first. It r
 - Do not publish a release unless the user explicitly requests publication.
 - Never pass a private update key in a command argument; use macOS Keychain or protected CI standard input exactly as documented by Sparkle.
 - Prefer HTTPS and the stable Sparkle version declared in `SparkleKitConfiguration.supportedSparkleVersion`.
+- Do not confuse `sparklekit update` (the CLI), `project upgrade` (generated files), an app update, or a deliberate Sparkle package dependency change.
 
 ## Completion evidence
 

@@ -4,7 +4,7 @@ import SparkleReleaseKitCLISupport
 import SparkleReleaseKitCore
 
 struct SparkleKitCLI {
-    static let version = "0.3.0"
+    static let version = SparkleReleaseKitVersion.current
 
     private let configurationStore = ConfigurationStore()
     private let terminalIO: TerminalIO
@@ -16,6 +16,18 @@ struct SparkleKitCLI {
     func run(arguments: [String]) throws {
         let command = arguments.first ?? "help"
         let rest = Array(arguments.dropFirst())
+        let automaticUpdateNotice = AutomaticUpdateNotice.startIfEligible(
+            command: command,
+            arguments: rest,
+            installedVersion: Self.version,
+            terminalIO: terminalIO
+        )
+        var completedSuccessfully = false
+        defer {
+            if completedSuccessfully {
+                automaticUpdateNotice?.emitIfReady(io: terminalIO)
+            }
+        }
 
         switch command {
         case "quickstart": try setup(rest, command: "quickstart")
@@ -28,6 +40,10 @@ struct SparkleKitCLI {
         case "validate-feed": try validateFeed(rest)
         case "prepare-release": try prepareRelease(rest)
         case "publish": try publish(rest)
+        case "update": try update(rest)
+        case "self-update": try update(["install"] + rest)
+        case "config": try userConfig(rest)
+        case "project": try project(rest)
         case "explain": try explain(rest)
         case "version", "--version", "-v":
             guard rest.isEmpty else { throw CLIError.unexpectedArgument(rest[0]) }
@@ -37,6 +53,7 @@ struct SparkleKitCLI {
             printHelp()
         default: throw CLIError.unknownCommand(command)
         }
+        completedSuccessfully = true
     }
 
     private func setup(_ arguments: [String], command: String) throws {
@@ -1220,7 +1237,7 @@ struct SparkleKitCLI {
             booleanFlags: [
                 "replace", "json", "require-sparkle-signature", "require-developer-id",
                 "require-notarization", "allow-ad-hoc-signing", "allow-unsigned",
-                "allow-project-execution",
+                "allow-project-execution", "allow-generate-appcast-environment",
             ]
         )
         try options.rejectExtraPositionals(maximum: 1)
@@ -1240,6 +1257,8 @@ struct SparkleKitCLI {
             phasedRolloutInterval: try options.integer("phased-rollout"),
             replaceExisting: options.flag("replace"),
             allowProjectExecution: options.flag("allow-project-execution"),
+            allowGenerateAppcastEnvironmentInCI:
+                options.flag("allow-generate-appcast-environment"),
             policyOverrides: try policyOverrides(from: options)
         )
         let json = options.flag("json")
@@ -1313,7 +1332,7 @@ struct SparkleKitCLI {
         guard arguments.first == "preview" else {
             if arguments.contains("--apply") {
                 throw CLIError.permissionRequired(
-                    "remote publishing is not implemented in v0.3; only 'publish preview' is available"
+                    "remote app publishing is not implemented; only 'publish preview' is available"
                 )
             }
             throw CLIError.missingArgument("publish subcommand 'preview'")
@@ -1421,6 +1440,395 @@ struct SparkleKitCLI {
         }
     }
 
+    private func update(_ arguments: [String]) throws {
+        guard let subcommand = arguments.first else {
+            throw CLIError.missingArgument(
+                "update subcommand 'check', 'install', 'rollback', or 'verify-manifest'"
+            )
+        }
+        let rest = Array(arguments.dropFirst())
+        switch subcommand {
+        case "check":
+            try updateCheck(rest)
+        case "install":
+            try updateInstall(rest)
+        case "rollback":
+            try updateRollback(rest)
+        case "verify-manifest":
+            try updateVerifyManifest(rest)
+        default:
+            throw CLIError.invalidValue("update", subcommand)
+        }
+    }
+
+    private func updateCheck(_ arguments: [String]) throws {
+        let options = try Options(
+            arguments,
+            valueOptions: ["channel", "timeout"],
+            booleanFlags: ["json"]
+        )
+        try options.rejectExtraPositionals(maximum: 0)
+        let channel = try parsedUpdateChannel(options.value("channel"))
+        let timeout = try parsedTimeout(options.value("timeout"), fallback: 10)
+        let json = options.flag("json")
+        let result: SelfUpdateCheckResult
+        if json {
+            result = try SelfUpdater().check(
+                installedVersion: Self.version,
+                channel: channel,
+                timeout: timeout
+            )
+        } else {
+            header("Check for SparkleReleaseKit updates")
+            let progress = TerminalProgressReporter(io: terminalIO)
+            result = try progress.run(
+                step: 1,
+                total: 1,
+                title: "Checking signed stable release metadata",
+                operation: "Downloading and verifying update manifest"
+            ) {
+                try SelfUpdater().check(
+                    installedVersion: Self.version,
+                    channel: channel,
+                    timeout: timeout
+                )
+            }
+        }
+        if json {
+            try printEnvelope(
+                command: "update check",
+                success: true,
+                metadata: result
+            )
+            return
+        }
+        detail("Installed", result.installedVersion)
+        detail("Available", result.availableVersion)
+        detail("Channel", result.channel.rawValue)
+        if result.updateAvailable {
+            success("A verified update is available.")
+            for note in result.releaseNotes {
+                print("  - \(TerminalSanitizer.text(note, preserveNewlines: false))")
+            }
+            print(
+                "\nInstall explicitly with: sparklekit update install"
+            )
+        } else {
+            success("SparkleReleaseKit is up to date.")
+        }
+    }
+
+    private func updateInstall(_ arguments: [String]) throws {
+        let options = try Options(
+            arguments,
+            valueOptions: ["channel", "timeout", "install-path"],
+            booleanFlags: ["json", "allow-downgrade"]
+        )
+        try options.rejectExtraPositionals(maximum: 0)
+        let channel = try parsedUpdateChannel(options.value("channel"))
+        let timeout = try parsedTimeout(options.value("timeout"), fallback: 30)
+        let installationPath = try resolvedExecutablePath(
+            options.value("install-path")
+        )
+        let json = options.flag("json")
+        let result: SelfUpdateInstallResult
+        if json {
+            result = try SelfUpdater().install(
+                installedVersion: Self.version,
+                installationPath: installationPath,
+                channel: channel,
+                allowDowngrade: options.flag("allow-downgrade"),
+                timeout: timeout
+            )
+        } else {
+            header("Install a verified SparkleReleaseKit update")
+            info("Installation path: \(installationPath.path)")
+            let progress = TerminalProgressReporter(io: terminalIO)
+            result = try progress.run(
+                step: 1,
+                total: 1,
+                title: "Downloading and installing verified update",
+                operation: "Verifying manifest, package, and atomic replacement"
+            ) {
+                try SelfUpdater().install(
+                    installedVersion: Self.version,
+                    installationPath: installationPath,
+                    channel: channel,
+                    allowDowngrade: options.flag("allow-downgrade"),
+                    timeout: timeout
+                )
+            }
+        }
+        if json {
+            try printEnvelope(
+                command: "update install",
+                success: true,
+                artifacts: [
+                    .init(
+                        type: "installation",
+                        path: result.installationPath
+                    ),
+                    .init(type: "rollback", path: result.backupPath),
+                ],
+                metadata: result
+            )
+            return
+        }
+        success(
+            "Installed SparkleReleaseKit \(result.installedVersion)."
+        )
+        detail("Previous", result.previousVersion)
+        detail("Rollback", result.backupPath)
+        print(
+            "\nRestore it with: sparklekit update rollback"
+        )
+    }
+
+    private func updateRollback(_ arguments: [String]) throws {
+        let options = try Options(
+            arguments,
+            valueOptions: ["install-path"],
+            booleanFlags: ["json"]
+        )
+        try options.rejectExtraPositionals(maximum: 0)
+        let installationPath = try resolvedExecutablePath(
+            options.value("install-path")
+        )
+        let result = try SelfUpdater().rollback(
+            installationPath: installationPath
+        )
+        if options.flag("json") {
+            try printEnvelope(
+                command: "update rollback",
+                success: true,
+                artifacts: [
+                    .init(
+                        type: "installation",
+                        path: result.installationPath
+                    )
+                ],
+                metadata: result
+            )
+            return
+        }
+        header("Rollback SparkleReleaseKit")
+        success(
+            "Restored SparkleReleaseKit \(result.restoredVersion)."
+        )
+        detail("Replaced", result.replacedVersion)
+        detail("Installation", result.installationPath)
+    }
+
+    private func updateVerifyManifest(_ arguments: [String]) throws {
+        let options = try Options(
+            arguments,
+            valueOptions: ["manifest", "signature", "channel"],
+            booleanFlags: ["json"]
+        )
+        try options.rejectExtraPositionals(maximum: 0)
+        guard let manifestPath = options.value("manifest") else {
+            throw CLIError.missingArgument("value for --manifest")
+        }
+        guard let signaturePath = options.value("signature") else {
+            throw CLIError.missingArgument("value for --signature")
+        }
+        let channel = try parsedUpdateChannel(options.value("channel"))
+        let manifest = try SelfUpdateManifestVerifier().verify(
+            manifestURL: URL(fileURLWithPath: manifestPath),
+            signatureURL: URL(fileURLWithPath: signaturePath),
+            expectedChannel: channel
+        )
+        if options.flag("json") {
+            try printEnvelope(
+                command: "update verify-manifest",
+                success: true,
+                metadata: manifest
+            )
+            return
+        }
+        header("Verify SparkleReleaseKit update manifest")
+        success("The signed update manifest is valid.")
+        detail("Version", manifest.version)
+        detail("Channel", manifest.channel.rawValue)
+        detail("Asset", manifest.asset.name)
+        detail("SHA-256", manifest.asset.sha256)
+    }
+
+    private func userConfig(_ arguments: [String]) throws {
+        guard let subcommand = arguments.first else {
+            throw CLIError.missingArgument("config subcommand 'get' or 'set'")
+        }
+        let rest = Array(arguments.dropFirst())
+        switch subcommand {
+        case "get":
+            let options = try Options(rest, booleanFlags: ["json"])
+            try options.rejectExtraPositionals(maximum: 1)
+            guard options.positionals.first == "update-check" else {
+                throw CLIError.missingArgument("config key update-check")
+            }
+            let configuration = try UserConfigurationStore().load()
+            if options.flag("json") {
+                try printEnvelope(
+                    command: "config get",
+                    success: true,
+                    metadata: UserConfigReport(
+                        updateCheck: configuration.updateChecksEnabled
+                    )
+                )
+            } else {
+                print(
+                    configuration.updateChecksEnabled ? "true" : "false"
+                )
+            }
+        case "set":
+            let options = try Options(rest, booleanFlags: ["json"])
+            try options.rejectExtraPositionals(maximum: 2)
+            guard options.positionals.count == 2,
+                options.positionals[0] == "update-check",
+                let enabled = parsedBoolean(options.positionals[1])
+            else {
+                throw CLIError.missingArgument(
+                    "config set update-check true|false"
+                )
+            }
+            let configuration = try UserConfigurationStore()
+                .setUpdateChecksEnabled(enabled)
+            if options.flag("json") {
+                try printEnvelope(
+                    command: "config set",
+                    success: true,
+                    metadata: UserConfigReport(
+                        updateCheck: configuration.updateChecksEnabled
+                    )
+                )
+            } else {
+                success(
+                    "Automatic update hints are \(enabled ? "enabled" : "disabled")."
+                )
+            }
+        default:
+            throw CLIError.invalidValue("config", subcommand)
+        }
+    }
+
+    private func project(_ arguments: [String]) throws {
+        guard let subcommand = arguments.first else {
+            throw CLIError.missingArgument("project subcommand 'upgrade'")
+        }
+        let rest = Array(arguments.dropFirst())
+        switch subcommand {
+        case "upgrade":
+            try projectUpgrade(rest)
+        default:
+            throw CLIError.invalidValue("project", subcommand)
+        }
+    }
+
+    private func projectUpgrade(_ arguments: [String]) throws {
+        let options = try Options(
+            arguments,
+            booleanFlags: ["apply", "json"]
+        )
+        try options.rejectExtraPositionals(maximum: 1)
+        let root = URL(
+            fileURLWithPath:
+                options.positionals.first
+                ?? FileManager.default.currentDirectoryPath
+        ).standardizedFileURL
+        let json = options.flag("json")
+        let result = try ProjectUpgrader().upgrade(
+            projectRoot: root,
+            apply: options.flag("apply")
+        )
+        if json {
+            try printEnvelope(
+                command: "project upgrade",
+                success: result.conflicts.isEmpty,
+                artifacts: result.backupPath.map {
+                    [.init(type: "backup", path: $0)]
+                } ?? [],
+                metadata: result
+            )
+        } else {
+            header("Upgrade managed project files")
+            detail("Project", root.path)
+            detail(
+                "Schema",
+                "\(result.fromSchemaVersion) -> \(result.toSchemaVersion)"
+            )
+            detail(
+                "Toolkit",
+                "\(result.fromToolVersion) -> \(result.toToolVersion)"
+            )
+            detail("Migration", result.migration)
+            print("\nPlanned changes")
+            for change in result.changes {
+                let marker =
+                    switch change.kind {
+                    case .create: "+"
+                    case .update: "~"
+                    case .unchanged: "="
+                    case .preserved: "P"
+                    case .conflict: "!"
+                    }
+                print(
+                    "  \(marker) \(TerminalSanitizer.text(change.relativePath, preserveNewlines: false))"
+                )
+                print(
+                    TerminalSanitizer.indented(
+                        change.summary,
+                        prefix: "    "
+                    )
+                )
+                if let diff = change.diff,
+                    change.kind != .unchanged,
+                    change.kind != .preserved
+                {
+                    print(
+                        TerminalSanitizer.indented(
+                            diff,
+                            prefix: "    "
+                        )
+                    )
+                }
+            }
+            if !result.conflicts.isEmpty {
+                print("\nConflicts")
+                for conflict in result.conflicts {
+                    print(
+                        "  ! \(TerminalSanitizer.text(conflict.relativePath, preserveNewlines: false))"
+                    )
+                    print(
+                        TerminalSanitizer.indented(
+                            conflict.reason,
+                            prefix: "    "
+                        )
+                    )
+                }
+                warning(
+                    "No files changed. Resolve conflicts and preview again."
+                )
+            } else if result.applied {
+                success("Managed project files were upgraded transactionally.")
+                if let backup = result.backupPath {
+                    detail("Backup", backup)
+                }
+            } else if options.flag("apply") {
+                success("The project already matches the current templates.")
+            } else {
+                print(
+                    "\nPreview only: run with --apply after reviewing these changes."
+                )
+            }
+        }
+        if !result.conflicts.isEmpty {
+            throw CLIError.projectUpgradeConflicts(
+                result.conflicts.count,
+                jsonWasPrinted: json
+            )
+        }
+    }
+
     private func explain(_ arguments: [String]) throws {
         let options = try Options(arguments, booleanFlags: ["json"])
         try options.rejectExtraPositionals(maximum: 1)
@@ -1518,6 +1926,85 @@ struct SparkleKitCLI {
             throw CLIError.invalidValue("release-mode", value)
         }
         return mode
+    }
+
+    private func parsedUpdateChannel(
+        _ value: String?
+    ) throws -> SelfUpdateChannel {
+        guard let value else { return .stable }
+        guard let channel = SelfUpdateChannel(rawValue: value.lowercased()) else {
+            throw CLIError.invalidValue("channel", value)
+        }
+        return channel
+    }
+
+    private func parsedTimeout(
+        _ value: String?,
+        fallback: TimeInterval
+    ) throws -> TimeInterval {
+        guard let value else { return fallback }
+        guard let timeout = TimeInterval(value),
+            timeout.isFinite,
+            timeout > 0,
+            timeout <= 300
+        else {
+            throw CLIError.invalidValue("timeout", value)
+        }
+        return timeout
+    }
+
+    private func parsedBoolean(_ value: String) -> Bool? {
+        switch value.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).lowercased() {
+        case "true", "yes", "1", "on":
+            true
+        case "false", "no", "0", "off":
+            false
+        default:
+            nil
+        }
+    }
+
+    private func resolvedExecutablePath(
+        _ explicitPath: String?
+    ) throws -> URL {
+        let input = explicitPath ?? CommandLine.arguments.first ?? ""
+        guard !input.isEmpty else {
+            throw SelfUpdateError.unsafeInstallationPath
+        }
+
+        let candidate: URL
+        if input.hasPrefix("/") {
+            candidate = URL(fileURLWithPath: input)
+        } else if input.contains("/") {
+            candidate = URL(
+                fileURLWithPath: input,
+                relativeTo: URL(
+                    fileURLWithPath:
+                        FileManager.default.currentDirectoryPath,
+                    isDirectory: true
+                )
+            ).standardizedFileURL
+        } else if let path = ProcessInfo.processInfo.environment["PATH"]?
+            .split(separator: ":")
+            .map(String.init)
+            .map({
+                URL(fileURLWithPath: $0, isDirectory: true)
+                    .appendingPathComponent(input)
+            })
+            .first(where: {
+                FileManager.default.isExecutableFile(atPath: $0.path)
+            })
+        {
+            candidate = path
+        } else {
+            throw SelfUpdateError.unsafeInstallationPath
+        }
+
+        let parent = candidate.deletingLastPathComponent()
+            .standardizedFileURL.resolvingSymlinksInPath()
+        return parent.appendingPathComponent(candidate.lastPathComponent)
     }
 
     private func parsedArchitectures(_ value: String?) throws -> [CPUArchitecture]? {
@@ -1653,6 +2140,12 @@ struct SparkleKitCLI {
               sparklekit validate-feed <appcast.xml> [--json]
               sparklekit prepare-release <archive> --version X.Y.Z [options]
               sparklekit publish preview [stage-path] [--project PATH] [--json]
+              sparklekit update check [--channel stable] [--json]
+              sparklekit update install [--channel stable] [options]
+              sparklekit update rollback [--install-path PATH] [--json]
+              sparklekit config get update-check [--json]
+              sparklekit config set update-check true|false [--json]
+              sparklekit project upgrade [project-path] [--apply] [--json]
               sparklekit explain <diagnostic-id> [--json]
 
             QUICKSTART AND SETUP OPTIONS
@@ -1696,6 +2189,21 @@ struct SparkleKitCLI {
               --allow-ad-hoc-signing      Permit valid ad-hoc signatures in free/auto mode
               --allow-unsigned            Deliberate unsigned-app release exception
               --allow-project-execution   Permit a reviewed helper inside the target project
+              --allow-generate-appcast-environment
+                                          Permit SPARKLE_GENERATE_APPCAST in CI
+              --json                      Emit stable, machine-readable JSON
+
+            SELF-UPDATE OPTIONS
+              check                       Verify signed release metadata only
+              install                     Explicitly install a verified update
+              rollback                    Restore the last verified installation
+              verify-manifest             Verify local signed release metadata
+              --channel VALUE             stable (default; beta is reserved)
+              --timeout SECONDS           Network timeout, at most 300 seconds
+              --install-path PATH         Explicit installed sparklekit executable
+              --manifest PATH             Local update manifest to verify
+              --signature PATH            Detached manifest signature
+              --allow-downgrade           Explicitly permit an older signed version
               --json                      Emit stable, machine-readable JSON
 
             TEST OPTIONS
@@ -1709,6 +2217,13 @@ struct SparkleKitCLI {
               prepare-release reads the private EdDSA key from macOS Keychain and
               never accepts private key material in sparklekit.json.
               publish preview never performs a network request or remote write.
+              update check never changes the installation. update install is always
+              explicit, verifies a signed manifest and SHA-256 before activation,
+              and keeps a verified rollback copy. It never changes app projects.
+              Optional update hints never install, send telemetry, or block commands.
+              project upgrade is preview-only unless --apply is supplied. It
+              preserves manual edits, reports conflicts, backs up every replaced
+              file, and rolls the complete transaction back after any failure.
 
             JSON CONTRACT
               schemaVersion, toolVersion, command, success, diagnostics, changes,
@@ -1760,6 +2275,10 @@ private struct TestReport: Encodable {
 
 private struct VerifyUpdateReport: Encodable {
     var expectedBuildVersion: String
+}
+
+private struct UserConfigReport: Encodable {
+    var updateCheck: Bool
 }
 
 private struct CLIArtifact: Encodable {
@@ -1856,6 +2375,66 @@ struct Options {
     }
 }
 
+private final class AutomaticUpdateNotice: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: SelfUpdateCheckResult?
+
+    static func startIfEligible(
+        command: String,
+        arguments: [String],
+        installedVersion: String,
+        terminalIO: TerminalIO
+    ) -> AutomaticUpdateNotice? {
+        let excludedCommands: Set<String> = [
+            "update", "self-update", "config", "help", "--help", "-h",
+            "version", "--version", "-v",
+        ]
+        guard terminalIO.stdinIsTTY,
+            terminalIO.stdoutIsTTY,
+            !excludedCommands.contains(command),
+            !arguments.contains("--json"),
+            !ProcessInfo.processInfo.environment.keys.contains("CI"),
+            let executable = CommandLine.arguments.first,
+            !executable.contains("/.build/"),
+            !executable.contains("/DerivedData/")
+        else {
+            return nil
+        }
+        let store = UserConfigurationStore()
+        guard (try? store.claimAutomaticUpdateCheck()) == true else {
+            return nil
+        }
+
+        let notice = AutomaticUpdateNotice()
+        DispatchQueue.global(qos: .utility).async {
+            let checked = try? SelfUpdater().check(
+                installedVersion: installedVersion,
+                timeout: 2
+            )
+            notice.store(checked)
+        }
+        return notice
+    }
+
+    func emitIfReady(io: TerminalIO) {
+        lock.lock()
+        let checked = result
+        lock.unlock()
+        guard let checked, checked.updateAvailable else { return }
+        io.writeLine()
+        io.writeLine(
+            "Update available: SparkleReleaseKit \(checked.availableVersion)."
+        )
+        io.writeLine("Run 'sparklekit update check' to review it.")
+    }
+
+    private func store(_ checked: SelfUpdateCheckResult?) {
+        lock.lock()
+        result = checked
+        lock.unlock()
+    }
+}
+
 protocol SparkleKitExitCodeError: Error {
     var exitCode: Int32 { get }
     var suppressTextOutput: Bool { get }
@@ -1874,6 +2453,7 @@ enum CLIError: LocalizedError, SparkleKitExitCodeError {
     case invalidDiagnosticID(String)
     case externalCommandFailed(String)
     case diagnosticsFailed(Int, jsonWasPrinted: Bool)
+    case projectUpgradeConflicts(Int, jsonWasPrinted: Bool)
 
     var errorDescription: String? {
         switch self {
@@ -1889,12 +2469,14 @@ enum CLIError: LocalizedError, SparkleKitExitCodeError {
         case .invalidDiagnosticID(let id): "Unknown diagnostic ID '\(id)'."
         case .externalCommandFailed(let detail): detail
         case .diagnosticsFailed(let count, _): "\(count) required check(s) failed."
+        case .projectUpgradeConflicts(let count, _):
+            "\(count) managed project-file conflict(s) require review."
         }
     }
 
     var exitCode: Int32 {
         switch self {
-        case .diagnosticsFailed: 2
+        case .diagnosticsFailed, .projectUpgradeConflicts: 2
         case .externalCommandFailed: 1
         default: 64
         }
@@ -1902,6 +2484,9 @@ enum CLIError: LocalizedError, SparkleKitExitCodeError {
 
     var suppressTextOutput: Bool {
         if case .diagnosticsFailed(_, let jsonWasPrinted) = self { return jsonWasPrinted }
+        if case .projectUpgradeConflicts(_, let jsonWasPrinted) = self {
+            return jsonWasPrinted
+        }
         return false
     }
 }

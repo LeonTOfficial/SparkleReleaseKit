@@ -20,6 +20,6 @@ Please remove private keys, tokens, certificates, personal data, and unrelated p
 
 ## Scope
 
-High-priority reports include private-key disclosure, command injection, path traversal outside the target repository, unsafe rollback, untrusted workflow execution with release secrets, signature-verification bypasses, and generated configurations that weaken macOS security controls.
+High-priority reports include private-key disclosure, command injection, path traversal outside the target repository, unsafe project or CLI rollback, untrusted `generate_appcast` execution, untrusted workflow execution with release secrets, self-update or app-update signature-verification bypasses, downgrade bypasses, and generated configurations that weaken macOS security controls.
 
 Sparkle itself is maintained separately. Vulnerabilities in Sparkle should follow the Sparkle project's security process.

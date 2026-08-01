@@ -133,7 +133,7 @@ struct ConfigurationStoreTests {
         #expect(configuration.distribution.requireSparkleSignature)
     }
 
-    @Test("Migrates schema v2 configuration with deterministic v3 defaults")
+    @Test("Migrates schema v2 configuration with deterministic current defaults")
     func migratesSchemaV2Configuration() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -154,11 +154,42 @@ struct ConfigurationStoreTests {
 
         let configuration = try ConfigurationStore().load(from: url)
 
-        #expect(configuration.schemaVersion == 3)
+        #expect(
+            configuration.schemaVersion
+                == SparkleKitConfiguration.currentSchemaVersion
+        )
         #expect(configuration.app.sandboxed == nil)
         #expect(configuration.project.target == nil)
         #expect(configuration.project.template == .auto)
         #expect(configuration.project.generateWorkflow)
+    }
+
+    @Test("Rejects v4 trust metadata disguised as a legacy schema")
+    func rejectsV4FieldsInLegacySchema() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("sparklekit.json")
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        var object = try #require(
+            JSONSerialization.jsonObject(
+                with: try ConfigurationStore().encodedData(
+                    fixtureConfiguration()
+                )
+            ) as? [String: Any]
+        )
+        object["schemaVersion"] = 3
+        try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.prettyPrinted, .sortedKeys]
+        ).write(to: url)
+
+        #expect(throws: ConfigurationError.self) {
+            try ConfigurationStore().load(from: url)
+        }
     }
 
     @Test("Keeps free and Developer ID distribution policies distinct")
@@ -194,6 +225,23 @@ struct ConfigurationStoreTests {
         var configuration = fixtureConfiguration()
         configuration.distribution.requireSparkleSignature = false
 
+        #expect(throws: ConfigurationError.self) {
+            try ConfigurationStore().validate(configuration)
+        }
+    }
+
+    @Test("Bounds helper allowlists and validates management versions strictly")
+    func validatesV4SecurityMetadata() {
+        var configuration = fixtureConfiguration()
+        configuration.tools.generateAppcast.allowedSHA256 = (0..<33).map {
+            String(format: "%064x", $0)
+        }
+        #expect(throws: ConfigurationError.self) {
+            try ConfigurationStore().validate(configuration)
+        }
+
+        configuration = fixtureConfiguration()
+        configuration.management.generatedByVersion = "0.4.0+untracked"
         #expect(throws: ConfigurationError.self) {
             try ConfigurationStore().validate(configuration)
         }

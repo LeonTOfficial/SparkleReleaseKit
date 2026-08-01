@@ -9,7 +9,7 @@ This file is the starting point for a new human or coding-agent session. It desc
 - Repository: https://github.com/LeonTOfficial/SparkleReleaseKit
 - Local checkout: `/Users/leontscheschlock/Documents/Codex/2026-07-17/SparkleReleaseKit`
 - Default branch: `main`
-- Current stable release: `v0.2.0`
+- Current stable release: `v0.4.0`
 - Package language mode: Swift 6
 - Minimum supported platform: macOS 13
 - License: MIT
@@ -41,7 +41,7 @@ SparkleReleaseKit is a standalone Swift command-line toolkit around the official
 
 The package contains:
 
-- `SparkleReleaseKitCore`: project detection, configuration, safe integration, diagnostics, build validation, archive verification, appcast validation, Ed25519 verification, and release staging.
+- `SparkleReleaseKitCore`: project detection, configuration, safe integration and migration, diagnostics, build validation, archive verification, appcast validation, Ed25519 verification, release staging, and signed CLI self-update.
 - `SparkleReleaseKitCLI`: the `sparklekit` command-line interface.
 - AppKit and SwiftUI reference integrations in `examples/`.
 - Human documentation in `docs/`.
@@ -50,7 +50,21 @@ The package contains:
 - CI, CodeQL, dependency review, secret checks, reusable validation, release packaging, and GitHub Pages workflows in `.github/workflows/`.
 - A documentation website in `website/`.
 
-Version 0.2.0 supports explicit `free`, `developer-id`, and capability-aware `auto` release modes. Sparkle EdDSA authentication is required in every mode. A paid Apple Developer membership is optional; Developer ID and notarization are a stronger optional distribution layer.
+Version 0.4.0 supports explicit `free`, `developer-id`, and capability-aware
+`auto` release modes. Sparkle EdDSA authentication is required in every mode.
+A paid Apple Developer membership is optional; Developer ID and notarization
+are a stronger optional distribution layer.
+
+The v0.4 maintenance contract adds:
+
+- centralized identity, signature, ownership, path, and optional SHA-256 trust
+  checks for Sparkle's official `generate_appcast` helper;
+- explicit signed CLI update check, install, and verified rollback commands;
+- schema v4 managed-file hashes and preview-first `project upgrade` migrations;
+- bounded redacted diffs, manual-edit conflicts, backups, locks, and rollback;
+- process-tree timeout handling with explicit exit, signal, and timeout results;
+- protected release-manifest signing, build metadata, attestations, and an
+  optional Developer ID signed, notarized, and stapled DMG.
 
 ## Security boundaries
 
@@ -98,18 +112,21 @@ For a real target integration, follow `AI/AI_INTEGRATION.md`. A completion claim
 
 ## Current product direction
 
-Treat `v0.2.0` as the stable baseline. The next planned milestone in `ROADMAP.md` is 0.3, Publication Preview:
+Treat `v0.4.0` as the stable baseline. The next planned milestone in
+`ROADMAP.md` is 0.5, Project adapters:
 
-- test-feed generation;
-- GitHub Release and Pages publication preview;
-- optional SBOM and provenance adapters without overstating coverage.
+- Tuist and XcodeGen adapters;
+- multi-target and separately published beta-channel support;
+- sandboxed and non-sandboxed runtime update fixtures;
+- a temporary local HTTPS feed harness for a complete Sparkle UI update test.
 
 Before implementing a roadmap item:
 
 1. inspect open GitHub issues and pull requests;
 2. confirm the requested scope with Leon;
 3. create a focused branch from current `origin/main`;
-4. preserve compatibility with the documented v0.2 configuration contract;
+4. preserve controlled loading of schemas v1 through v4 and use
+   `sparklekit project upgrade` for explicit managed-file migration;
 5. add tests and update human, CLI, schema, and AI documentation together when behavior changes.
 
 Do not start a new milestone merely because it is listed here. The next chat should first ask Leon which SparkleReleaseKit task he wants to pursue, unless his opening message already specifies it.
