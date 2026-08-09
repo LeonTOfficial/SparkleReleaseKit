@@ -59,7 +59,7 @@ struct GuidedTerminalTests {
             title: "Running validation",
             operation: "xcodebuild"
         ) {
-            Thread.sleep(forTimeInterval: 0.04)
+            #expect(waitUntil { fixture.output.value.contains("Still working: xcodebuild") })
             return true
         }
 
@@ -91,7 +91,7 @@ struct GuidedTerminalTests {
                 title: "Running command",
                 operation: "xcodebuild"
             ) {
-                Thread.sleep(forTimeInterval: 0.04)
+                #expect(waitUntil { fixture.output.value.contains("\r") })
                 throw SyntheticError()
             }
         }
@@ -114,6 +114,18 @@ struct GuidedTerminalTests {
         )
 
         #expect(!io.colorEnabled)
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 2,
+        condition: () -> Bool
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+        return condition()
     }
 
     private func terminalFixture(

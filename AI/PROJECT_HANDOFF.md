@@ -37,7 +37,7 @@ The Battery Panic repository is intentionally outside this checkout. Treat it as
 
 ## What exists now
 
-SparkleReleaseKit is a standalone Swift command-line toolkit around the official Sparkle 2 update framework. It does not replace or fork Sparkle.
+SparkleReleaseKit is a standalone Swift command-line toolkit around the official Sparkle 2 update framework. It targets Sparkle 2.9.5 and does not replace, fork, or bundle Sparkle as an application runtime.
 
 The package contains:
 
@@ -117,7 +117,7 @@ Treat `v0.4.0` as the stable baseline. The next planned milestone in
 
 - Tuist and XcodeGen adapters;
 - multi-target and separately published beta-channel support;
-- sandboxed and non-sandboxed runtime update fixtures;
+- real sandboxed and non-sandboxed runtime update fixtures using local HTTPS;
 - a temporary local HTTPS feed harness for a complete Sparkle UI update test.
 
 Before implementing a roadmap item:

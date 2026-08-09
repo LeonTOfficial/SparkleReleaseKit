@@ -420,10 +420,10 @@ struct ReleaseWorkflowTests {
     }
 
     @Test(
-        "Runs the complete secure maintenance lifecycle on a minimal app",
+        "Runs the synthetic maintenance contract on a minimal app bundle",
         .timeLimit(.minutes(1))
     )
-    func secureMaintenanceEndToEnd() throws {
+    func syntheticMaintenanceContract() throws {
         let oldApp = try makeSignedArchive(
             shortVersion: "1.1.0",
             buildVersion: "110"
@@ -759,8 +759,8 @@ struct ReleaseWorkflowTests {
             "CFBundleIdentifier": "org.sparkle-project.Sparkle",
             "CFBundleName": "Sparkle",
             "CFBundlePackageType": "FMWK",
-            "CFBundleShortVersionString": "2.9.4",
-            "CFBundleVersion": "2.9.4",
+            "CFBundleShortVersionString": "2.9.5",
+            "CFBundleVersion": "2.9.5",
         ]
         let frameworkData = try PropertyListSerialization.data(fromPropertyList: frameworkPlist, format: .xml, options: 0)
         try frameworkData.write(to: frameworkResources.appendingPathComponent("Info.plist"))

@@ -57,6 +57,6 @@
     "channel": null,
     "feedURL": "https://exampledeveloper.github.io/MyApp/appcast.xml",
     "publicEDKey": "",
-    "sparkleVersion": "2.9.4"
+    "sparkleVersion": "2.9.5"
   }
 }

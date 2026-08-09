@@ -4,6 +4,12 @@ SparkleReleaseKit supports macOS 13 or later. The release CLI is universal
 `arm64` and `x86_64`; building from source requires the current stable Xcode and
 Swift toolchain documented in the release metadata.
 
+The package and binary carry a macOS 13 deployment target, but the hosted CI
+runner currently validates runtime behavior on macOS 26. A real macOS 13 VM or
+hardware canary for startup, `version`, `help`, JSON, resources, installation,
+and self-update remains required before claiming full oldest-system runtime
+coverage. The project does not treat deployment-target metadata as that proof.
+
 ## Install a tested release
 
 1. Download `SparkleReleaseKit-macos.zip` and
@@ -32,6 +38,12 @@ Swift toolchain documented in the release metadata.
 The default destination is `~/.local/bin`. Set
 `SPARKLEKIT_INSTALL_DIR` to use another writable directory. Paths containing
 spaces are supported. The installer does not require `sudo`.
+
+Each installation is first copied into a versioned private directory and
+validated there. A single active link switches the executable and resource
+bundle together; failures and termination signals restore the prior active
+version. Existing flat installations are migrated before the new version is
+activated.
 
 When a release includes `SparkleReleaseKit-macos.dmg`, that image contains the
 same CLI signed with Developer ID, notarized by Apple, and stapled. Validate it

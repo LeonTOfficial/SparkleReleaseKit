@@ -3,43 +3,127 @@ name: Release SparkleReleaseKit
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing annotated vX.Y.Z tag to release
+        required: true
+        type: string
+      historical_exception:
+        description: Allow a visible audited exception when the tag is not current main
+        required: true
+        default: false
+        type: boolean
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
-  release:
-    environment: release
+  validate-build:
+    name: Validate and build without release credentials
     runs-on: macos-26
     timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      release-tag: ${{ steps.release.outputs.tag }}
+      release-version: ${{ steps.release.outputs.version }}
+      source-commit: ${{ steps.release.outputs.commit }}
     steps:
-      - name: Check out tagged source
+      - name: Check out release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.release_tag || github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify tag and changelog
+      - name: Verify tag, current main, version, and changelog
+        id: release
         shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag || github.ref_name }}
+          HISTORICAL_EXCEPTION: ${{ inputs.historical_exception || 'false' }}
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          tag_commit="$(/usr/bin/git rev-parse "$GITHUB_REF_NAME^{commit}")"
-          /usr/bin/git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main || {
-            echo "Release tag must point to a commit reachable from origin/main." >&2
+          tag="$REQUESTED_TAG"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          version="${tag#v}"
+          tag_commit="$(git rev-parse "refs/tags/$tag^{commit}")"
+          main_commit="$(git rev-parse refs/remotes/origin/main^{commit})"
+          if [[ "$tag_commit" != "$main_commit" ]]; then
+            if [[ "$HISTORICAL_EXCEPTION" != "true" || "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+              echo "A normal stable release tag must equal the current origin/main head." >&2
+              exit 1
+            fi
+            echo "::warning::Historical release exception approved for $tag at $tag_commit; current main is $main_commit."
+          fi
+          [[ "$(git cat-file -t "refs/tags/$tag")" == "tag" ]] || {
+            echo "Future release tags must be annotated; signed tags are required by the governance proposal." >&2
             exit 1
           }
-          grep -F "[$version]" CHANGELOG.md
           grep -F "public static let current = \"$version\"" Sources/SparkleReleaseKitCore/Models.swift
+          scripts/extract-changelog.sh "$version" release-notes.md
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
 
       - name: Run complete validation suite
         run: scripts/run-tests.sh
 
-      - name: Build universal release binary
-        run: swift build --configuration release --arch arm64 --arch x86_64
+      - name: Build universal release input
+        run: |
+          set -euo pipefail
+          swift build --configuration release --arch arm64 --arch x86_64
+          product_dir=".build/apple/Products/Release"
+          package="release-input/dist/SparkleReleaseKit"
+          mkdir -p "$package"
+          cp "$product_dir/sparklekit" "$package/"
+          cp -R "$product_dir/SparkleReleaseKit_SparkleReleaseKitCore.bundle" "$package/"
+          cp scripts/install.sh "$package/install.sh"
+          cp README.md CHANGELOG.md LICENSE SECURITY.md AGENTS.md llms.txt "$package/"
+          cp -R AI docs examples schemas "$package/"
+          cp scripts/create-update-manifest.swift release-input/
+          cp release-notes.md release-input/
+          cp CHANGELOG.md release-input/
+          git show -s --format=%ct "${{ steps.release.outputs.commit }}" > release-input/source-date-epoch.txt
+          lipo -verify_arch arm64 x86_64 "$package/sparklekit"
+          tar -czf release-input.tar.gz -C release-input .
+
+      - name: Upload verified release input
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-input-${{ steps.release.outputs.commit }}
+          path: release-input.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-publish:
+    name: Sign, attest, and publish verified input
+    needs: validate-build
+    environment: release
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download verified release input
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-input-${{ needs.validate-build.outputs.source-commit }}
+
+      - name: Extract and bind verified input
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.validate-build.outputs.source-commit }}
+          RELEASE_VERSION: ${{ needs.validate-build.outputs.release-version }}
+        run: |
+          set -euo pipefail
+          mkdir release-input
+          tar -xzf release-input.tar.gz -C release-input
+          grep -F "[$RELEASE_VERSION]" release-input/CHANGELOG.md
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
 
       - name: Import optional protected Developer ID identity
         id: signing
@@ -67,76 +151,40 @@ jobs:
           /usr/bin/security create-keychain -p "$keychain_password" "$keychain"
           /usr/bin/security set-keychain-settings -lut 21600 "$keychain"
           /usr/bin/security unlock-keychain -p "$keychain_password" "$keychain"
-          /usr/bin/security import "$certificate" \
-            -k "$keychain" \
-            -P "$CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign \
-            -T /usr/bin/security
-          /usr/bin/security set-key-partition-list \
-            -S apple-tool:,apple:,codesign: \
-            -s \
-            -k "$keychain_password" \
-            "$keychain" >/dev/null
-          identity="$(
-            /usr/bin/security find-identity -v -p codesigning "$keychain" |
-              /usr/bin/awk -F '"' '/Developer ID Application/{print $2; exit}'
-          )"
-          if [[ -z "$identity" ]]; then
-            echo "No Developer ID Application identity was imported." >&2
-            exit 1
-          fi
+          /usr/bin/security import "$certificate" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          /usr/bin/security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+          identity="$(/usr/bin/security find-identity -v -p codesigning "$keychain" | /usr/bin/awk -F '"' '/Developer ID Application/{print $2; exit}')"
+          [[ -n "$identity" ]] || { echo "No Developer ID Application identity was imported." >&2; exit 1; }
           echo "mode=developer-id" >> "$GITHUB_OUTPUT"
           echo "identity=$identity" >> "$GITHUB_OUTPUT"
           echo "keychain=$keychain" >> "$GITHUB_OUTPUT"
           /bin/rm -f "$certificate"
 
-      - name: Package signed CLI and build metadata
+      - name: Sign, package, and describe release
+        shell: bash
         env:
+          RELEASE_VERSION: ${{ needs.validate-build.outputs.release-version }}
+          SOURCE_COMMIT: ${{ needs.validate-build.outputs.source-commit }}
           SIGNING_MODE: ${{ steps.signing.outputs.mode }}
           SIGNING_IDENTITY: ${{ steps.signing.outputs.identity }}
           SIGNING_KEYCHAIN: ${{ steps.signing.outputs.keychain }}
-        shell: bash
         run: |
           set -euo pipefail
-          product_dir=".build/apple/Products/Release"
-          mkdir -p dist/SparkleReleaseKit
-          cp "$product_dir/sparklekit" dist/SparkleReleaseKit/
-          cp -R "$product_dir/SparkleReleaseKit_SparkleReleaseKitCore.bundle" dist/SparkleReleaseKit/
-          cp scripts/install.sh dist/SparkleReleaseKit/install.sh
-          cp README.md CHANGELOG.md LICENSE SECURITY.md AGENTS.md llms.txt dist/SparkleReleaseKit/
-          cp -R AI docs examples schemas dist/SparkleReleaseKit/
-          lipo -info dist/SparkleReleaseKit/sparklekit
+          package="release-input/dist/SparkleReleaseKit"
+          binary="$package/sparklekit"
           if [[ "$SIGNING_MODE" == "developer-id" ]]; then
-            codesign \
-              --force \
-              --options runtime \
-              --timestamp \
-              --keychain "$SIGNING_KEYCHAIN" \
-              --sign "$SIGNING_IDENTITY" \
-              dist/SparkleReleaseKit/sparklekit
+            codesign --force --options runtime --timestamp --keychain "$SIGNING_KEYCHAIN" --sign "$SIGNING_IDENTITY" "$binary"
           else
-            codesign \
-              --force \
-              --sign - \
-              --timestamp=none \
-              dist/SparkleReleaseKit/sparklekit
+            codesign --force --sign - --timestamp=none "$binary"
           fi
-          codesign --verify --strict --verbose=2 dist/SparkleReleaseKit/sparklekit
-          if [[ "$SIGNING_MODE" == "developer-id" ]]; then
-            codesign -d --verbose=4 dist/SparkleReleaseKit/sparklekit 2>&1 |
-              grep -F "runtime"
-          fi
-
-          export RELEASE_VERSION="${GITHUB_REF_NAME#v}"
-          export SOURCE_COMMIT="$GITHUB_SHA"
-          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
+          codesign --verify --strict --verbose=2 "$binary"
+          lipo -verify_arch arm64 x86_64 "$binary"
+          export SOURCE_DATE_EPOCH="$(cat release-input/source-date-epoch.txt)"
+          [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]]
           export SWIFT_VERSION="$(swift --version | head -1)"
           export XCODE_VERSION="$(xcodebuild -version | tr '\n' ' ')"
-          export SIGNING_MODE
           python3 - <<'PY'
-          import json
-          import os
-
+          import json, os
           metadata = {
               "schemaVersion": 1,
               "version": os.environ["RELEASE_VERSION"],
@@ -146,7 +194,7 @@ jobs:
               "xcodeVersion": os.environ["XCODE_VERSION"].strip(),
               "minimumMacOS": "13.0",
               "architectures": ["arm64", "x86_64"],
-              "sparkleCompatibility": "2.9.4",
+              "sparkleCompatibility": "2.9.5",
               "signingMode": os.environ["SIGNING_MODE"],
               "workflowRun": os.environ["GITHUB_RUN_ID"],
           }
@@ -154,40 +202,49 @@ jobs:
               json.dump(metadata, stream, indent=2, sort_keys=True)
               stream.write("\n")
           PY
-          cp sparklekit-build-metadata.json dist/SparkleReleaseKit/
-
+          cp sparklekit-build-metadata.json "$package/"
           timestamp="$(date -u -r "$SOURCE_DATE_EPOCH" +%Y%m%d%H%M.%S)"
-          find dist/SparkleReleaseKit -exec touch -h -t "$timestamp" {} +
-          ditto -c -k --sequesterRsrc --keepParent \
-            dist/SparkleReleaseKit \
-            SparkleReleaseKit-macos.zip
+          find "$package" -exec touch -h -t "$timestamp" {} +
+          ditto -c -k --sequesterRsrc --keepParent "$package" SparkleReleaseKit-macos.zip
           shasum -a 256 SparkleReleaseKit-macos.zip > SparkleReleaseKit-macos.zip.sha256
 
-      - name: Create and verify signed self-update manifest
+      - name: Create and cross-check signed self-update manifest
         shell: bash
         env:
+          RELEASE_TAG: ${{ needs.validate-build.outputs.release-tag }}
+          RELEASE_VERSION: ${{ needs.validate-build.outputs.release-version }}
+          SOURCE_COMMIT: ${{ needs.validate-build.outputs.source-commit }}
           SPARKLEKIT_UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.SPARKLEKIT_UPDATE_SIGNING_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          if [[ -z "${SPARKLEKIT_UPDATE_SIGNING_PRIVATE_KEY:-}" ]]; then
-            echo "Protected self-update signing key is not configured." >&2
-            exit 1
-          fi
-          swift scripts/create-update-manifest.swift \
-            --version "${GITHUB_REF_NAME#v}" \
+          [[ -n "${SPARKLEKIT_UPDATE_SIGNING_PRIVATE_KEY:-}" ]] || { echo "Protected self-update signing key is not configured." >&2; exit 1; }
+          note_args=()
+          while IFS= read -r line; do
+            if [[ "$line" == "- "* && ${#note_args[@]} -lt 40 ]]; then
+              note_args+=(--note "${line#- }")
+            fi
+          done < release-input/release-notes.md
+          (( ${#note_args[@]} >= 2 ))
+          swift release-input/create-update-manifest.swift \
+            --version "$RELEASE_VERSION" \
             --asset SparkleReleaseKit-macos.zip \
-            --asset-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/SparkleReleaseKit-macos.zip" \
-            --source-commit "$GITHUB_SHA" \
-            --release-notes-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
-            --note "Security and maintenance improvements for SparkleReleaseKit." \
-            --note "See the signed release and CHANGELOG for complete details." \
+            --asset-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$RELEASE_TAG/SparkleReleaseKit-macos.zip" \
+            --source-commit "$SOURCE_COMMIT" \
+            --release-notes-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/$RELEASE_TAG" \
+            "${note_args[@]}" \
             --output sparklekit-update-manifest.json \
             --signature-output sparklekit-update-manifest.json.sig
-          dist/SparkleReleaseKit/sparklekit update verify-manifest \
-            --manifest sparklekit-update-manifest.json \
-            --signature sparklekit-update-manifest.json.sig \
-            --json >/dev/null
-          python3 -m json.tool sparklekit-update-manifest.json >/dev/null
+          unset SPARKLEKIT_UPDATE_SIGNING_PRIVATE_KEY
+          release-input/dist/SparkleReleaseKit/sparklekit update verify-manifest --manifest sparklekit-update-manifest.json --signature sparklekit-update-manifest.json.sig --json >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          body = Path("release-input/release-notes.md").read_text(encoding="utf-8")
+          manifest = json.loads(Path("sparklekit-update-manifest.json").read_text(encoding="utf-8"))
+          expected = [line[2:] for line in body.splitlines() if line.startswith("- ")][:20]
+          if not expected or manifest["releaseNotes"] != expected:
+              raise SystemExit("signed manifest notes differ from the checked changelog section")
+          PY
 
       - name: Create optional notarized and stapled disk image
         id: notarization
@@ -204,67 +261,38 @@ jobs:
             echo "Notarized DMG skipped because no Developer ID identity is configured."
             exit 0
           fi
-          if [[ -z "${NOTARY_KEY_BASE64:-}" || -z "${NOTARY_KEY_ID:-}" || -z "${NOTARY_ISSUER_ID:-}" ]]; then
-            echo "Developer ID releases require complete protected notarization credentials." >&2
-            exit 1
-          fi
+          [[ -n "${NOTARY_KEY_BASE64:-}" && -n "${NOTARY_KEY_ID:-}" && -n "${NOTARY_ISSUER_ID:-}" ]] || { echo "Developer ID releases require complete protected notarization credentials." >&2; exit 1; }
           umask 077
           notary_key="$RUNNER_TEMP/AuthKey_${NOTARY_KEY_ID}.p8"
           printf '%s' "$NOTARY_KEY_BASE64" | /usr/bin/base64 --decode > "$notary_key"
-          hdiutil create \
-            -quiet \
-            -volname "SparkleReleaseKit" \
-            -srcfolder dist/SparkleReleaseKit \
-            -ov \
-            -format UDZO \
-            SparkleReleaseKit-macos.dmg
-          xcrun notarytool submit SparkleReleaseKit-macos.dmg \
-            --key "$notary_key" \
-            --key-id "$NOTARY_KEY_ID" \
-            --issuer "$NOTARY_ISSUER_ID" \
-            --wait \
-            --timeout 20m
+          hdiutil create -quiet -volname SparkleReleaseKit -srcfolder release-input/dist/SparkleReleaseKit -ov -format UDZO SparkleReleaseKit-macos.dmg
+          xcrun notarytool submit SparkleReleaseKit-macos.dmg --key "$notary_key" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait --timeout 20m
           xcrun stapler staple SparkleReleaseKit-macos.dmg
           xcrun stapler validate SparkleReleaseKit-macos.dmg
-          spctl --assess \
-            --type open \
-            --context context:primary-signature \
-            --verbose=4 \
-            SparkleReleaseKit-macos.dmg
-          mountpoint="$RUNNER_TEMP/sparklekit-notarized"
-          mkdir -p "$mountpoint"
-          hdiutil attach \
-            -quiet \
-            -nobrowse \
-            -readonly \
-            -mountpoint "$mountpoint" \
-            SparkleReleaseKit-macos.dmg
-          trap 'hdiutil detach -quiet "$mountpoint" || true' EXIT
-          codesign --verify --strict --verbose=2 "$mountpoint/sparklekit"
-          spctl --assess --type execute --verbose=4 "$mountpoint/sparklekit"
-          hdiutil detach -quiet "$mountpoint"
-          trap - EXIT
+          spctl --assess --type open --context context:primary-signature --verbose=4 SparkleReleaseKit-macos.dmg
           shasum -a 256 SparkleReleaseKit-macos.dmg > SparkleReleaseKit-macos.dmg.sha256
           /bin/rm -f "$notary_key"
           echo "available=true" >> "$GITHUB_OUTPUT"
 
       - name: Verify packaged CLI
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.validate-build.outputs.release-version }}
         run: |
           set -euo pipefail
           mkdir package-check
           ditto -x -k SparkleReleaseKit-macos.zip package-check
           packaged="package-check/SparkleReleaseKit/sparklekit"
-          "$packaged" version | grep -F "SparkleReleaseKit ${GITHUB_REF_NAME#v}"
+          "$packaged" version | grep -F "SparkleReleaseKit $RELEASE_VERSION"
           lipo "$packaged" -verify_arch arm64 x86_64
           codesign --verify --strict --verbose=2 "$packaged"
           install_dir="$RUNNER_TEMP/sparklekit-install"
           SPARKLEKIT_INSTALL_DIR="$install_dir" package-check/SparkleReleaseKit/install.sh
-          "$install_dir/sparklekit" version | grep -F "SparkleReleaseKit ${GITHUB_REF_NAME#v}"
+          "$install_dir/sparklekit" version | grep -F "SparkleReleaseKit $RELEASE_VERSION"
           codesign --verify --strict --verbose=2 "$install_dir/sparklekit"
           shasum -a 256 -c SparkleReleaseKit-macos.zip.sha256
 
-      - name: Attest tested release metadata and binary package
+      - name: Attest tested release assets
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
@@ -274,7 +302,7 @@ jobs:
             sparklekit-update-manifest.json.sig
             sparklekit-build-metadata.json
 
-      - name: Attest notarized disk image
+      - name: Attest optional notarized disk image
         if: steps.notarization.outputs.available == 'true'
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
@@ -282,30 +310,20 @@ jobs:
             SparkleReleaseKit-macos.dmg
             SparkleReleaseKit-macos.dmg.sha256
 
-      - name: Publish GitHub Release
+      - name: Publish GitHub Release from checked changelog notes
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate-build.outputs.release-tag }}
+          RELEASE_VERSION: ${{ needs.validate-build.outputs.release-version }}
           DMG_AVAILABLE: ${{ steps.notarization.outputs.available }}
         shell: bash
         run: |
           set -euo pipefail
-          assets=(
-            SparkleReleaseKit-macos.zip
-            SparkleReleaseKit-macos.zip.sha256
-            sparklekit-update-manifest.json
-            sparklekit-update-manifest.json.sig
-            sparklekit-build-metadata.json
-          )
+          assets=(SparkleReleaseKit-macos.zip SparkleReleaseKit-macos.zip.sha256 sparklekit-update-manifest.json sparklekit-update-manifest.json.sig sparklekit-build-metadata.json)
           if [[ "$DMG_AVAILABLE" == "true" ]]; then
-            assets+=(
-              SparkleReleaseKit-macos.dmg
-              SparkleReleaseKit-macos.dmg.sha256
-            )
+            assets+=(SparkleReleaseKit-macos.dmg SparkleReleaseKit-macos.dmg.sha256)
           fi
-          gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
-            --verify-tag \
-            --generate-notes \
-            --title "SparkleReleaseKit ${GITHUB_REF_NAME#v}"
+          gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --notes-file release-input/release-notes.md --title "SparkleReleaseKit $RELEASE_VERSION"
 
       - name: Remove ephemeral release credentials
         if: always()
@@ -316,6 +334,4 @@ jobs:
           if [[ -n "${RELEASE_KEYCHAIN:-}" ]]; then
             /usr/bin/security delete-keychain "$RELEASE_KEYCHAIN" || true
           fi
-          /bin/rm -f \
-            "$RUNNER_TEMP/developer-id-application.p12" \
-            "$RUNNER_TEMP"/AuthKey_*.p8
+          /bin/rm -f "$RUNNER_TEMP/developer-id-application.p12" "$RUNNER_TEMP"/AuthKey_*.p8

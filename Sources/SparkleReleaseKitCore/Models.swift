@@ -6,7 +6,7 @@ public enum SparkleReleaseKitVersion {
 
 public struct SparkleKitConfiguration: Codable, Equatable, Sendable {
     public static let currentSchemaVersion = 4
-    public static let supportedSparkleVersion = "2.9.4"
+    public static let supportedSparkleVersion = "2.9.5"
     public static let schemaURL = "https://leontofficial.github.io/SparkleReleaseKit/schema/sparklekit.schema.json"
 
     public var schema: String

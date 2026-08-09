@@ -2,6 +2,19 @@
 
 All notable changes to SparkleReleaseKit are documented here. The project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Changed
+
+- Sparkle 2.9.5 is the compatibility baseline for generated integrations, examples, fixtures, documentation, and release metadata. SparkleReleaseKit does not bundle the framework as an app runtime.
+- The maintenance lifecycle test is identified as a synthetic contract fixture; a real older-to-newer Sparkle UI update over local HTTPS remains a separate acceptance step.
+- CodeQL initialization and analysis use the same immutable action revision, and Dependabot groups future CodeQL action updates.
+- The packaged installer validates a complete versioned stage and atomically activates or rolls back the executable and resource bundle together.
+
+### Security
+
+- Appcast validation now treats namespace and hierarchy mismatches as validator failures: only the official Sparkle namespace URI and exact `rss > channel > item > enclosure` structure are accepted. This closes a validator false-positive and is not a claim of a Sparkle cryptographic bypass.
+
 ## [0.4.0] - 2026-08-01
 
 ### Added
@@ -12,7 +25,7 @@ All notable changes to SparkleReleaseKit are documented here. The project follow
 - `project upgrade` preview/apply workflow with schema v4 management metadata, original template hashes, bounded redacted diffs, manual-edit conflicts, backups, idempotency, symlink containment, and full rollback.
 - Explicit process termination reason and signal metadata, configurable output retention, and reliable descendant-process termination on timeout.
 - Protected release-environment manifest signing, build metadata, optional Developer ID and Hardened Runtime signing, notarized and stapled DMG generation, Gatekeeper checks, and expanded provenance attestations.
-- Real end-to-end maintenance fixture covering old and new app releases, Sparkle signatures, tampering, policy modes, interrupted staging, project migration, CLI update, and rollback.
+- Synthetic maintenance contract fixture covering old and new app bundles, signature verification, tampering, policy modes, interrupted staging, project migration, CLI update, and rollback. It does not exercise Sparkle's visible updater UI or a live HTTPS feed.
 - Dedicated installation, CLI update, and managed-project migration guides.
 
 ### Changed

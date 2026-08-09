@@ -9,6 +9,16 @@ SparkleReleaseKit has six boundaries:
 5. `ProjectUpgrader` compares generated files with recorded template hashes and delegates conflict-free writes to the same integration transaction.
 6. `SelfUpdater` verifies the toolkit's independent signed release metadata, bounded package, SHA-256, archive tree, and code signature before `SelfUpdateInstaller` atomically activates it.
 
+## Supported API surface
+
+During the 0.x series, `SparkleReleaseKitCore` is an implementation module, not
+a supported SemVer-stable library API. The supported integration contracts are
+the `sparklekit` CLI, documented exit codes, versioned JSON envelopes, schemas,
+and generated project files. External packages should not import Core until a
+public API is deliberately selected, documented with DocC, and protected by an
+API-diff gate. Public Swift access currently enables internal target reuse and
+may be reduced before 1.0.
+
 ## Safety model
 
 Integration is plan-first. A dry run computes every managed path without writing. Apply mode takes stable snapshots, acquires a project lock, revalidates concurrent state, backs up existing managed files, writes atomically, patches a real Info.plist through `PropertyListSerialization`, and restores its own touched files if an operation fails.

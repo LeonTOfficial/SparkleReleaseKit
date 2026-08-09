@@ -12,7 +12,7 @@
 
 SparkleReleaseKit is a human-friendly and AI-friendly toolkit around [Sparkle 2](https://sparkle-project.org/). It detects an existing Xcode project, creates the updater integration, configures secure update metadata, adds release validation, and explains the two Xcode steps that cannot be changed safely through a public command-line API.
 
-It does **not** replace or fork Sparkle. Sparkle remains the secure update engine; SparkleReleaseKit makes the surrounding setup reproducible and difficult to misconfigure.
+It does **not** replace, fork, or bundle Sparkle as an app runtime. Your app adds the official Sparkle package directly; SparkleReleaseKit makes the surrounding setup reproducible and difficult to misconfigure.
 
 **A paid Apple Developer membership is optional.** Free mode combines Sparkle EdDSA update authentication, HTTPS, checksums, release manifests, and ad-hoc app signing. Developer ID and notarization remain a stronger optional Apple-verified route, not a requirement for secure Sparkle signatures.
 
@@ -22,7 +22,7 @@ It does **not** replace or fork Sparkle. Sparkle remains the secure update engin
 - Recognizes AppKit and SwiftUI applications.
 - Infers the app name, bundle identifier, scheme, `Info.plist`, and GitHub remote.
 - Creates one validated `sparklekit.json` configuration.
-- Generates a minimal `AppUpdater.swift` for Sparkle 2.9.4.
+- Generates a minimal `AppUpdater.swift` for Sparkle 2.9.5.
 - Adds `SUFeedURL`, `SUPublicEDKey`, and automatic-update preferences safely.
 - Creates a GitHub Actions release-readiness workflow.
 - Pins every generated external workflow dependency to an immutable commit SHA.

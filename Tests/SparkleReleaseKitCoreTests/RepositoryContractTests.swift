@@ -60,7 +60,7 @@ struct RepositoryContractTests {
         #expect(references >= 8)
     }
 
-    @Test("Workflow checkouts discard credentials and release tags originate on main")
+    @Test("Workflow checkouts discard credentials and stable tags equal current main")
     func workflowsProtectRepositoryCredentials() throws {
         let root = repositoryRoot()
         let workflowRoot = root.appendingPathComponent(".github/workflows")
@@ -84,8 +84,13 @@ struct RepositoryContractTests {
             encoding: .utf8
         )
         #expect(release.contains("fetch-depth: 0"))
-        #expect(release.contains("git merge-base --is-ancestor"))
+        #expect(release.contains("tag_commit\" != \"$main_commit"))
         #expect(release.contains("refs/remotes/origin/main"))
+        #expect(release.contains("validate-build:"))
+        #expect(release.contains("sign-publish:"))
+        #expect(release.contains("--notes-file release-input/release-notes.md"))
+        #expect(!release.contains("--generate-notes"))
+        #expect(release.contains("unset SPARKLEKIT_UPDATE_SIGNING_PRIVATE_KEY"))
     }
 
     private func repositoryRoot() -> URL {

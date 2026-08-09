@@ -105,6 +105,18 @@ with (sources / "Info.plist").open("wb") as stream:
         },
         stream,
     )
+
+signature = __import__("base64").b64encode(b"A" * 64).decode("ascii")
+(root / "invalid-appcast.xml").write_text(
+    f'''<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel><title>Example App updates</title></channel>
+  <item><enclosure url="https://example.com/App.zip" version="120"
+    length="42" edSignature="{signature}" /></item>
+</rss>
+''',
+    encoding="utf-8",
+)
 PY
 
 /bin/cp -R "$fixture_root/." "$guided_cancel_root/"
@@ -315,6 +327,30 @@ if payload["metadata"]["applied"]:
 if payload["metadata"]["conflicts"]:
     raise SystemExit("Unmodified integration unexpectedly has conflicts")
 PY
+
+set +e
+invalid_feed_json="$("$CLI" validate-feed "$fixture_root/invalid-appcast.xml" --json 2>&1)"
+invalid_feed_json_status=$?
+invalid_feed_human="$("$CLI" validate-feed "$fixture_root/invalid-appcast.xml" 2>&1)"
+invalid_feed_human_status=$?
+set -e
+[[ $invalid_feed_json_status -eq 2 ]]
+[[ $invalid_feed_human_status -eq 2 ]]
+INVALID_FEED_JSON="$invalid_feed_json" /usr/bin/python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["INVALID_FEED_JSON"])
+if payload["success"]:
+    raise SystemExit("Invalid namespace/hierarchy feed unexpectedly succeeded")
+if not any(item["id"] == "SRK4001" for item in payload["diagnostics"]):
+    raise SystemExit("Invalid feed did not preserve the RSS diagnostic contract")
+PY
+if [[ "$invalid_feed_human" == *$'\r'* || "$invalid_feed_human" == *$'\033'* ]]; then
+  echo "Invalid feed output contains terminal control characters" >&2
+  exit 1
+fi
+/usr/bin/grep -F "[FAIL]" <<<"$invalid_feed_human" >/dev/null
 
 expect_usage_error "unknown option" doctor --jsno
 expect_usage_error "missing option value" setup --owner

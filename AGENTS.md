@@ -34,6 +34,11 @@ For a new chat or coding-agent session, read `AI/PROJECT_HANDOFF.md` first. It r
 
 ## Completion evidence
 
+Repository unit tests use synthetic app bundles and helper fixtures to verify
+contracts. They are not evidence of a visible Sparkle UI update. Call an update
+test real only when an older AppKit or SwiftUI application installs a newer
+build from an isolated HTTPS feed using official Sparkle.
+
 Completion requires all of the following:
 
 - `sparklekit doctor` has no failures.

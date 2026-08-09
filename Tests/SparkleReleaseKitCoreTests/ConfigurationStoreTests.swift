@@ -119,7 +119,7 @@ struct ConfigurationStoreTests {
           "app": {"name":"Example App","bundleIdentifier":"com.example.app","minimumMacOS":"13.0","style":"swiftUI"},
           "project": {"container":"Example App.xcodeproj","scheme":"Example App","configuration":"Release","infoPlist":"Example App/Info.plist"},
           "github": {"owner":"example","repository":"example-app","pagesBranch":"gh-pages"},
-          "updates": {"sparkleVersion":"2.9.4","feedURL":"https://example.com/appcast.xml","publicEDKey":"\(publicKey)","automaticChecks":true,"automaticDownloads":false},
+          "updates": {"sparkleVersion":"2.9.5","feedURL":"https://example.com/appcast.xml","publicEDKey":"\(publicKey)","automaticChecks":true,"automaticDownloads":false},
           "distribution": {"installer":"dmg","updateArchive":"zip","notarization":"optional"}
         }
         """.write(to: url, atomically: true, encoding: .utf8)
@@ -147,7 +147,7 @@ struct ConfigurationStoreTests {
           "app": {"name":"Example App","bundleIdentifier":"com.example.app","minimumMacOS":"13.0","style":"swiftUI"},
           "project": {"container":"Example App.xcodeproj","scheme":"Example App","configuration":"Release","infoPlist":"Example App/Info.plist"},
           "github": {"owner":"example","repository":"example-app","pagesBranch":"gh-pages"},
-          "updates": {"sparkleVersion":"2.9.4","feedURL":"https://example.com/appcast.xml","publicEDKey":"\(publicKey)","automaticChecks":true,"automaticDownloads":false},
+          "updates": {"sparkleVersion":"2.9.5","feedURL":"https://example.com/appcast.xml","publicEDKey":"\(publicKey)","automaticChecks":true,"automaticDownloads":false},
           "distribution": {"installer":"dmg","updateArchive":"zip","releaseMode":"free","requireSparkleSignature":true,"requireDeveloperID":false,"requireNotarization":false,"allowAdHocSigning":true,"expectedArchitectures":["arm64","x86_64"]}
         }
         """.write(to: url, atomically: true, encoding: .utf8)

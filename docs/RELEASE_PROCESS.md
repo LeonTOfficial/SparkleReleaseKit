@@ -51,32 +51,44 @@ Prefer an explicit path and pin the reviewed helper in `sparklekit.json`:
 }
 ```
 
-The official Sparkle 2.9.4 binary is ad-hoc signed and may have no Team ID, so
+The official Sparkle 2.9.5 binary is ad-hoc signed and may have no Team ID, so
 an exact SHA-256 allowlist is the strongest practical pin when that distributed
 binary is used. Recalculate and review the hash whenever Sparkle is upgraded.
 Do not weaken the policy merely to make an unfamiliar helper run.
+
+SparkleReleaseKit records and validates this compatibility baseline but does
+not bundle Sparkle into an application. The application target must depend on
+the official Sparkle 2.9.5 package directly.
 
 ## Release SparkleReleaseKit itself
 
 SparkleReleaseKit's own tag workflow is separate from an app release:
 
+The proposed branch, tag, environment, immutable-release, and administrator
+bypass settings are specified in [GITHUB_GOVERNANCE.md](GITHUB_GOVERNANCE.md).
+They are intentionally not changed by this repository patch.
+
 1. Update `SparkleReleaseKitVersion.current`, `CHANGELOG.md`, schemas, and docs.
 2. Run `scripts/run-tests.sh` and the universal release build locally.
 3. Merge the exact release commit to `main`.
-4. Create an annotated `vX.Y.Z` tag on that commit.
+4. Create a signed annotated `vX.Y.Z` tag on that exact current `main` commit.
 5. The protected `release` environment supplies only the dedicated CLI update
    manifest key and optional Apple release credentials.
-6. The workflow rebuilds and tests the tag, verifies tag ancestry and version,
-   signs the binary, and emits `sparklekit-build-metadata.json`.
-7. It packages and verifies the ZIP, checksum, universal architectures,
+6. An unprivileged job tests the tag, requires it to equal current `main` for a
+   normal release, builds the universal input, and passes only that artifact to
+   the protected signing/publishing job. A manual historical exception is
+   explicit in workflow inputs and warnings.
+7. Release notes and signed manifest notes are derived from the same versioned
+   `CHANGELOG.md` section and cross-checked before publication.
+8. It packages and verifies the ZIP, checksum, universal architectures,
    strict code signature, installer, and CLI version.
-8. It creates `sparklekit-update-manifest.json` and its detached Ed25519
+9. It creates `sparklekit-update-manifest.json` and its detached Ed25519
    signature, then verifies them with the same embedded trust root used by
    `sparklekit update`.
-9. With complete Apple credentials it also creates a Developer-ID signed,
+10. With complete Apple credentials it also creates a Developer-ID signed,
    notarized, stapled, and Gatekeeper-assessed DMG. Missing Apple credentials
    never affect pull-request CI.
-10. It creates GitHub provenance attestations before publishing every asset.
+11. It creates GitHub provenance attestations before publishing every asset.
 
 The release must include:
 
